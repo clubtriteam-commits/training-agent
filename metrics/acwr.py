@@ -31,10 +31,6 @@ def calculate_acwr(wellness_day):
 
 
 def analyze_athlete_acwr(wellness_list, athlete_id, athlete_name, save_to_db=True):
-    """
-    Изчислява ACWR за всеки ден, записва в базата, и връща аларми
-    САМО при преход в статус (не повтаря всеки ден).
-    """
     results = []
     alerts = []
 
@@ -56,10 +52,13 @@ def analyze_athlete_acwr(wellness_list, athlete_id, athlete_name, save_to_db=Tru
                 ctl=ctl,
                 atl=atl,
                 acwr=acwr,
-                acwr_status=status
+                acwr_status=status,
+                hrv=day.get('hrv'),
+                sleep_secs=day.get('sleepSecs'),
+                stress=day.get('stress'),
+                resting_hr=day.get('restingHR')
             )
 
-            # Аларма само при ПРЕХОД в статус (не всеки ден същото)
             if prev_status is not None and prev_status != status:
                 if status == 'high':
                     msg = f"⚠️ {athlete_name}: ACWR скочи на {acwr} ({date}) - риск от пренатоварване"
