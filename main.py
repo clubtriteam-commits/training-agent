@@ -5,7 +5,8 @@
 import yaml
 from fetch_intervals import get_wellness
 from metrics.acwr import analyze_athlete_acwr
-from alerts.notifier_telegram import send_alerts_batch, send_telegram_message
+from metrics.readiness import analyze_readiness
+from alerts.notifier_telegram import send_alerts_batch
 
 
 def run_daily_check():
@@ -21,11 +22,15 @@ def run_daily_check():
             print(f"⚠️ Грешка при извличане на данни за {athlete['name']}: {status}")
             continue
 
-        results, alerts = analyze_athlete_acwr(
+        # ACWR (записва в базата + връща аларми при преход)
+        results, acwr_alerts = analyze_athlete_acwr(
             wellness, athlete['intervals_id'], athlete['name']
         )
+        all_alerts.extend(acwr_alerts)
 
-        all_alerts.extend(alerts)
+        # Readiness (HRV/сън/стрес) - чете от базата, която acwr вече е обновил
+        readiness_alerts = analyze_readiness(athlete['intervals_id'], athlete['name'])
+        all_alerts.extend(readiness_alerts)
 
     if all_alerts:
         print(f"Пращам {len(all_alerts)} нови аларми в Telegram...")
@@ -36,4 +41,3 @@ def run_daily_check():
 
 if __name__ == '__main__':
     run_daily_check()
-
