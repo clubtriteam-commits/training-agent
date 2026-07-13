@@ -1,0 +1,16 @@
+# Secrets and config with sensitive data
+config/secrets.env
+config/athletes.yaml
+
+# Database
+data/*.db
+data/*.sqlite
+
+# Python
+__pycache__/
+*.pyc
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
