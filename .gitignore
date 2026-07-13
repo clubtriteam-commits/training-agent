@@ -1,6 +1,5 @@
 # Secrets and config with sensitive data
 config/secrets.env
-config/athletes.yaml
 
 # Database
 data/*.db
