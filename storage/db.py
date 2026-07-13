@@ -49,6 +49,18 @@ def init_db():
         )
     ''')
 
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS world_triathlon (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            athlete_id TEXT NOT NULL,
+            athlete_name TEXT NOT NULL,
+            world_ranking INTEGER,
+            regional_ranking INTEGER,
+            fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(athlete_id, fetched_at)
+        )
+    ''')
+
     conn.commit()
     conn.close()
     print(f"DB initialized at {DB_PATH}")
@@ -83,7 +95,6 @@ def upsert_daily_metric(athlete_id, athlete_name, date, ctl=None, atl=None,
 
 
 def get_previous_status(athlete_id, before_date):
-    """Взима последния запазен acwr_status преди дадена дата - за детекция на преходи"""
     conn = get_connection()
     cur = conn.cursor()
     cur.execute('''
@@ -103,6 +114,17 @@ def log_alert(athlete_id, athlete_name, date, alert_type, message):
         INSERT INTO alerts_log (athlete_id, athlete_name, date, alert_type, message)
         VALUES (?, ?, ?, ?, ?)
     ''', (athlete_id, athlete_name, date, alert_type, message))
+    conn.commit()
+    conn.close()
+
+
+def save_world_triathlon_ranking(athlete_id, athlete_name, world_ranking, regional_ranking):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        INSERT INTO world_triathlon (athlete_id, athlete_name, world_ranking, regional_ranking)
+        VALUES (?, ?, ?, ?)
+    ''', (athlete_id, athlete_name, world_ranking, regional_ranking))
     conn.commit()
     conn.close()
 
