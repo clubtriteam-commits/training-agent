@@ -1,5 +1,6 @@
 # Secrets and config with sensitive data
 config/secrets.env
+deploy.config.psd1
 
 # Database
 data/*.db
