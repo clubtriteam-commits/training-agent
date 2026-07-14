@@ -45,17 +45,28 @@ $metrics = $stmt->fetchAll(PDO::FETCH_ASSOC);
 // Последен запис (за header тайловете)
 $latest = $metrics ? $metrics[count($metrics) - 1] : null;
 
-// История на ранкинга за периода
+// История на ранкинга за периода.
+// world_triathlon се пълни с World Triathlon ID, а daily_metrics — с intervals ID,
+// затова съединяваме по athlete_name (и двете идват от config/athletes.yaml).
 $stmt = $pdo->prepare("
     SELECT date(fetched_at) AS date, world_ranking, regional_ranking
     FROM world_triathlon
-    WHERE athlete_id = ? AND date(fetched_at) >= ?
+    WHERE athlete_name = ? AND date(fetched_at) >= ?
     GROUP BY date(fetched_at)
     ORDER BY fetched_at ASC
 ");
-$stmt->execute([$athlete_id, $since]);
+$stmt->execute([$athlete_name, $since]);
 $rankings = $stmt->fetchAll(PDO::FETCH_ASSOC);
-$latest_ranking = $rankings ? $rankings[count($rankings) - 1] : null;
+
+// Тайловете показват последната налична стойност независимо от избрания период
+$stmt = $pdo->prepare("
+    SELECT world_ranking, regional_ranking
+    FROM world_triathlon
+    WHERE athlete_name = ?
+    ORDER BY fetched_at DESC LIMIT 1
+");
+$stmt->execute([$athlete_name]);
+$latest_ranking = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
 
 // История на алармите
 $stmt = $pdo->prepare("
@@ -294,12 +305,17 @@ $alert_type_labels = [
     Chart.register(bandPlugin);
 
     function series(label, data, color) {
+        // Самотна точка (без съседи) е невидима при pointRadius 0 — дай ѝ радиус,
+        // иначе графика с 1 запис изглежда празна
+        const lonely = (v, i) => v !== null
+            && (i === 0 || data[i - 1] === null)
+            && (i === data.length - 1 || data[i + 1] === null);
         return {
             label, data,
             borderColor: color,
             backgroundColor: color,
             borderWidth: 2,
-            pointRadius: 0,
+            pointRadius: data.map((v, i) => lonely(v, i) ? 4 : 0),
             pointHoverRadius: 5,
             pointHoverBorderColor: '#ffffff',
             pointHoverBorderWidth: 2,

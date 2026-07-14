@@ -11,10 +11,12 @@ from datetime import date, timedelta
 
 from storage.db import DB_PATH, init_db, upsert_daily_metric, log_alert
 
+# (intervals_id за daily_metrics, world_triathlon_id за world_triathlon, име) —
+# двете таблици ползват РАЗЛИЧНИ ID-та, както на production
 ATHLETES = [
-    ("i333802", "Мира Георгиева"),
-    ("i273532", "Миролюба Ненкова"),
-    ("i172547", "Симеон Бобеков"),
+    ("i333802", "178014", "Мира Георгиева"),
+    ("i273532", "188676", "Миролюба Ненкова"),
+    ("i172547", "181219", "Симеон Бобеков"),
 ]
 
 DAYS = 180
@@ -41,7 +43,7 @@ def seed():
     conn.commit()
     conn.close()
 
-    for idx, (athlete_id, name) in enumerate(ATHLETES):
+    for idx, (athlete_id, wt_id, name) in enumerate(ATHLETES):
         rng = random.Random(42 + idx)
         ctl = 40.0 + idx * 10
         atl = ctl
@@ -97,7 +99,7 @@ def seed():
                 "INSERT OR IGNORE INTO world_triathlon "
                 "(athlete_id, athlete_name, world_ranking, regional_ranking, fetched_at) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (athlete_id, name, world, regional, fetched))
+                (wt_id, name, world, regional, fetched))
         conn.commit()
         conn.close()
         print(f"Seeded {DAYS + 1} days for {name}")

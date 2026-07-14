@@ -23,13 +23,15 @@ function get_latest_metrics($pdo, $athlete_id) {
     return $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
-function get_latest_ranking($pdo, $athlete_id) {
+// world_triathlon се пълни с World Triathlon ID (не intervals ID),
+// затова търсим по athlete_name — общото поле от config/athletes.yaml
+function get_latest_ranking($pdo, $athlete_name) {
     $stmt = $pdo->prepare("
         SELECT * FROM world_triathlon
-        WHERE athlete_id = ?
+        WHERE athlete_name = ?
         ORDER BY fetched_at DESC LIMIT 1
     ");
-    $stmt->execute([$athlete_id]);
+    $stmt->execute([$athlete_name]);
     return $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
@@ -85,7 +87,7 @@ function status_badge($status) {
         <?php foreach ($athletes as $athlete): ?>
             <?php
                 $metrics = get_latest_metrics($pdo, $athlete['athlete_id']);
-                $ranking = get_latest_ranking($pdo, $athlete['athlete_id']);
+                $ranking = get_latest_ranking($pdo, $athlete['athlete_name']);
                 $alerts = get_recent_alerts($pdo, $athlete['athlete_id']);
             ?>
             <div class="card">
