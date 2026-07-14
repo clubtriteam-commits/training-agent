@@ -89,7 +89,7 @@ function status_badge($status) {
                 $alerts = get_recent_alerts($pdo, $athlete['athlete_id']);
             ?>
             <div class="card">
-                <h2><?= htmlspecialchars($athlete['athlete_name']) ?></h2>
+                <h2><a href="athlete.php?id=<?= urlencode($athlete['athlete_id']) ?>" style="color:inherit;text-decoration:none;"><?= htmlspecialchars($athlete['athlete_name']) ?> &rsaquo;</a></h2>
 
                 <?php if ($metrics): ?>
                     <div class="metric-row">

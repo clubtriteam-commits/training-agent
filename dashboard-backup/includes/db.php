@@ -1,6 +1,8 @@
 <?php
+require_once __DIR__ . '/config.php';
+
 function get_db_connection() {
-    $db_path = '/home/trailser/training-agent/data/agent.db';
+    $db_path = get_db_path();
     try {
         $pdo = new PDO('sqlite:' . $db_path);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);

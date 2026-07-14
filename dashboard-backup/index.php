@@ -1,9 +1,10 @@
 <?php
 session_start();
+require_once 'includes/config.php';
 $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = isset($_POST['password']) ? $_POST['password'] : '';
-    $env_path = '/home/trailser/training-agent/config/secrets.env';
+    $env_path = get_secrets_path();
     $env_content = file_get_contents($env_path);
     preg_match('/DASHBOARD_PASSWORD=(.*)/', $env_content, $matches);
     $correct_password = isset($matches[1]) ? trim($matches[1]) : '';
