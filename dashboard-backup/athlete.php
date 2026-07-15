@@ -79,6 +79,31 @@ $stmt = $pdo->prepare("
 $stmt->execute([$athlete_id]);
 $alerts = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Резултати от състезания (world_triathlon_results се пълни от
+// fetch_world_triathlon.py; join по athlete_name — същата причина като
+// world_triathlon по-горе: таблицата ползва World Triathlon ID).
+// Таблицата може още да не съществува при стара база — прескачаме тихо.
+$race_results = [];
+try {
+    $stmt = $pdo->prepare("
+        SELECT event_date, event_title, position, total_time, event_country
+        FROM world_triathlon_results
+        WHERE athlete_name = ? AND event_date IS NOT NULL
+        ORDER BY event_date DESC
+    ");
+    $stmt->execute([$athlete_name]);
+    $race_results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $race_results = [];
+}
+
+// Наличните години (за бутоните), най-новата първа = избрана по подразбиране
+$result_years = array_values(array_unique(array_map(
+    fn($r) => substr($r['event_date'], 0, 4),
+    $race_results
+)));
+$default_year = $result_years[0] ?? null;
+
 // Последни 14 дни за таблицата (най-новите първи)
 $table_rows = array_reverse(array_slice($metrics, -14));
 
@@ -137,6 +162,9 @@ $alert_type_labels = [
         .subheader { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
         .period-nav a { padding: 5px 12px; border-radius: 14px; font-size: 14px; }
         .period-nav a.active { background: #2250e3; color: white; }
+        .year-nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+        .year-nav button { padding: 5px 12px; border-radius: 14px; font-size: 14px; border: none; background: #eceae4; color: var(--ink-2); cursor: pointer; }
+        .year-nav button.active { background: #2250e3; color: white; }
         .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 20px; }
         .tile { background: var(--surface); border-radius: 8px; padding: 14px 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
         .tile .label { font-size: 13px; color: var(--ink-2); }
@@ -278,6 +306,36 @@ $alert_type_labels = [
         </div>
     </div>
 
+    <div class="table-card" style="margin-top:20px;">
+        <h2>Резултати по година</h2>
+        <?php if ($race_results): ?>
+        <nav class="year-nav" aria-label="Филтър по година">
+            <?php foreach ($result_years as $year): ?>
+                <button type="button" data-year="<?= htmlspecialchars($year) ?>"
+                        class="<?= $year === $default_year ? 'active' : '' ?>"><?= htmlspecialchars($year) ?></button>
+            <?php endforeach; ?>
+        </nav>
+        <table id="results-table">
+            <thead>
+                <tr><th>Дата</th><th>Състезание</th><th>Позиция</th><th>Време</th></tr>
+            </thead>
+            <tbody>
+                <?php foreach ($race_results as $r): ?>
+                <tr data-year="<?= htmlspecialchars(substr($r['event_date'], 0, 4)) ?>"
+                    <?= substr($r['event_date'], 0, 4) !== $default_year ? 'style="display:none;"' : '' ?>>
+                    <td><?= htmlspecialchars($r['event_date']) ?></td>
+                    <td class="msg"><?= htmlspecialchars($r['event_title'] ?? '—') ?></td>
+                    <td><?= $r['position'] !== null && $r['position'] !== '' ? htmlspecialchars($r['position']) : '—' ?></td>
+                    <td><?= $r['total_time'] !== null && $r['total_time'] !== '' ? htmlspecialchars($r['total_time']) : '—' ?></td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php else: ?>
+            <p class="empty">Няма резултати от състезания</p>
+        <?php endif; ?>
+    </div>
+
     <script>
     const DATA = <?= json_encode($chart_data, JSON_UNESCAPED_UNICODE) ?>;
 
@@ -399,6 +457,22 @@ $alert_type_labels = [
         data: { labels: DATA.rankLabels, datasets: [series('Regional Ranking', DATA.regional, BLUE)] },
         options: baseOptions({ reverse: true })
     });
+
+    // Филтър по година за "Резултати по година" — изцяло клиентски,
+    // без презареждане: показва само редовете с избраната година.
+    (function () {
+        const nav = document.querySelector('.year-nav');
+        if (!nav) return;
+        const buttons = nav.querySelectorAll('button');
+        const rows = document.querySelectorAll('#results-table tbody tr');
+        nav.addEventListener('click', function (ev) {
+            const btn = ev.target.closest('button');
+            if (!btn) return;
+            const year = btn.dataset.year;
+            buttons.forEach(b => b.classList.toggle('active', b === btn));
+            rows.forEach(r => { r.style.display = r.dataset.year === year ? '' : 'none'; });
+        });
+    }());
     </script>
 </body>
 </html>

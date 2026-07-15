@@ -61,6 +61,27 @@ def init_db():
         )
     ''')
 
+    # Пълни резултати от get_athlete_results(). UNIQUE включва и prog_id:
+    # едно събитие може да даде няколко резултата за атлет (полуфинал +
+    # финал, индивидуално + щафета), така че event_id сам не стига.
+    # position е TEXT — API-то връща и "DNF"/"DSQ"/"LAP" освен числа.
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS world_triathlon_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            athlete_id TEXT NOT NULL,
+            athlete_name TEXT NOT NULL,
+            event_id INTEGER NOT NULL,
+            prog_id INTEGER NOT NULL DEFAULT 0,
+            event_date TEXT,
+            event_title TEXT,
+            position TEXT,
+            total_time TEXT,
+            event_country TEXT,
+            fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(athlete_id, event_id, prog_id)
+        )
+    ''')
+
     conn.commit()
     conn.close()
     print(f"DB initialized at {DB_PATH}")
@@ -114,6 +135,30 @@ def log_alert(athlete_id, athlete_name, date, alert_type, message):
         INSERT INTO alerts_log (athlete_id, athlete_name, date, alert_type, message)
         VALUES (?, ?, ?, ?, ?)
     ''', (athlete_id, athlete_name, date, alert_type, message))
+    conn.commit()
+    conn.close()
+
+
+def upsert_world_triathlon_result(athlete_id, athlete_name, event_id, prog_id,
+                                  event_date=None, event_title=None, position=None,
+                                  total_time=None, event_country=None):
+    """Insert/refresh един резултат; повторно пускане не дублира записи."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        INSERT INTO world_triathlon_results
+            (athlete_id, athlete_name, event_id, prog_id, event_date,
+             event_title, position, total_time, event_country)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(athlete_id, event_id, prog_id) DO UPDATE SET
+            event_date=excluded.event_date,
+            event_title=excluded.event_title,
+            position=excluded.position,
+            total_time=excluded.total_time,
+            event_country=excluded.event_country,
+            fetched_at=CURRENT_TIMESTAMP
+    ''', (athlete_id, athlete_name, event_id, prog_id, event_date,
+          event_title, position, total_time, event_country))
     conn.commit()
     conn.close()
 
