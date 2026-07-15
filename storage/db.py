@@ -77,10 +77,23 @@ def init_db():
             position TEXT,
             total_time TEXT,
             event_country TEXT,
+            swim_split TEXT,
+            t1_split TEXT,
+            bike_split TEXT,
+            t2_split TEXT,
+            run_split TEXT,
             fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(athlete_id, event_id, prog_id)
         )
     ''')
+
+    # Миграция за бази, създадени преди сплит колоните: CREATE IF NOT EXISTS
+    # не добавя колони към съществуваща таблица, затова ALTER при липса.
+    cur.execute("PRAGMA table_info(world_triathlon_results)")
+    existing_cols = {row[1] for row in cur.fetchall()}
+    for col in ('swim_split', 't1_split', 'bike_split', 't2_split', 'run_split'):
+        if col not in existing_cols:
+            cur.execute(f"ALTER TABLE world_triathlon_results ADD COLUMN {col} TEXT")
 
     conn.commit()
     conn.close()
@@ -141,26 +154,59 @@ def log_alert(athlete_id, athlete_name, date, alert_type, message):
 
 def upsert_world_triathlon_result(athlete_id, athlete_name, event_id, prog_id,
                                   event_date=None, event_title=None, position=None,
-                                  total_time=None, event_country=None):
-    """Insert/refresh един резултат; повторно пускане не дублира записи."""
+                                  total_time=None, event_country=None,
+                                  swim_split=None, t1_split=None, bike_split=None,
+                                  t2_split=None, run_split=None):
+    """Insert/refresh един резултат; повторно пускане не дублира записи.
+
+    Връща True, когато редът е НОВ (не е съществувал преди тази
+    синхронизация) — на това стъпва Telegram детекцията за нови резултати.
+    """
     conn = get_connection()
     cur = conn.cursor()
+
+    cur.execute('''
+        SELECT 1 FROM world_triathlon_results
+        WHERE athlete_id = ? AND event_id = ? AND prog_id = ?
+    ''', (athlete_id, event_id, prog_id))
+    is_new = cur.fetchone() is None
+
     cur.execute('''
         INSERT INTO world_triathlon_results
             (athlete_id, athlete_name, event_id, prog_id, event_date,
-             event_title, position, total_time, event_country)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             event_title, position, total_time, event_country,
+             swim_split, t1_split, bike_split, t2_split, run_split)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(athlete_id, event_id, prog_id) DO UPDATE SET
             event_date=excluded.event_date,
             event_title=excluded.event_title,
             position=excluded.position,
             total_time=excluded.total_time,
             event_country=excluded.event_country,
+            swim_split=excluded.swim_split,
+            t1_split=excluded.t1_split,
+            bike_split=excluded.bike_split,
+            t2_split=excluded.t2_split,
+            run_split=excluded.run_split,
             fetched_at=CURRENT_TIMESTAMP
     ''', (athlete_id, athlete_name, event_id, prog_id, event_date,
-          event_title, position, total_time, event_country))
+          event_title, position, total_time, event_country,
+          swim_split, t1_split, bike_split, t2_split, run_split))
     conn.commit()
     conn.close()
+    return is_new
+
+
+def count_world_triathlon_results(athlete_id):
+    """Брой записани резултати за атлет — 0 означава първо (инициално)
+    зареждане, при което не пращаме аларми за всеки исторически резултат."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT COUNT(*) AS n FROM world_triathlon_results WHERE athlete_id = ?',
+                (athlete_id,))
+    n = cur.fetchone()['n']
+    conn.close()
+    return n
 
 
 def save_world_triathlon_ranking(athlete_id, athlete_name, world_ranking, regional_ranking):
