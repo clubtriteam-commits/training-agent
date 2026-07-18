@@ -6,6 +6,19 @@ import os
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'agent.db')
 
+# Изнесено в константа: ползва се и от init_db(), и от mark_activity_seen(),
+# за да работи детекцията на коментари и върху база, на която init_db()
+# не е пускан след добавянето на таблицата.
+SEEN_ACTIVITIES_SCHEMA = '''
+    CREATE TABLE IF NOT EXISTS seen_activities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        athlete_id TEXT NOT NULL,
+        activity_id TEXT NOT NULL,
+        checked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(athlete_id, activity_id)
+    )
+'''
+
 
 def get_connection():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -86,6 +99,8 @@ def init_db():
             UNIQUE(athlete_id, event_id, prog_id)
         )
     ''')
+
+    cur.execute(SEEN_ACTIVITIES_SCHEMA)
 
     # Миграция за бази, създадени преди сплит колоните: CREATE IF NOT EXISTS
     # не добавя колони към съществуваща таблица, затова ALTER при липса.
@@ -207,6 +222,22 @@ def count_world_triathlon_results(athlete_id):
     n = cur.fetchone()['n']
     conn.close()
     return n
+
+
+def mark_activity_seen(athlete_id, activity_id):
+    """Отбелязва активност като проверена; връща True само ако е НОВА
+    (не е била виждана преди) — на това стъпва детекцията на коментари."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(SEEN_ACTIVITIES_SCHEMA)
+    cur.execute('''
+        INSERT OR IGNORE INTO seen_activities (athlete_id, activity_id)
+        VALUES (?, ?)
+    ''', (str(athlete_id), str(activity_id)))
+    is_new = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return is_new
 
 
 def save_world_triathlon_ranking(athlete_id, athlete_name, world_ranking, regional_ranking):

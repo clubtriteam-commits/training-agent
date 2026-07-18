@@ -134,8 +134,9 @@ $chart_data = [
 ];
 
 $alert_type_labels = [
-    'acwr_high' => 'Висок ACWR',
-    'acwr_low'  => 'Нисък ACWR',
+    'acwr_high'       => 'Висок ACWR',
+    'acwr_low'        => 'Нисък ACWR',
+    'comment_keyword' => 'Оплакване в коментар',
 ];
 ?>
 <!DOCTYPE html>

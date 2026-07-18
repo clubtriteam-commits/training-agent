@@ -3,9 +3,10 @@
 Пуска се през cron (дневно за аларми, седмично за пълен summary).
 """
 import yaml
-from fetch_intervals import get_wellness
+from fetch_intervals import get_wellness, get_activities
 from metrics.acwr import analyze_athlete_acwr
 from metrics.readiness import analyze_readiness
+from metrics.comment_alerts import analyze_new_activities
 from alerts.notifier_telegram import send_alerts_batch
 
 
@@ -31,6 +32,16 @@ def run_daily_check():
         # Readiness (HRV/сън/стрес) - чете от базата, която acwr вече е обновил
         readiness_alerts = analyze_readiness(athlete['intervals_id'], athlete['name'])
         all_alerts.extend(readiness_alerts)
+
+        # Оплаквания в коментарите на новите (невиждани) активности
+        act_status, activities = get_activities(athlete['intervals_id'])
+        if act_status == 200:
+            keyword_alerts = analyze_new_activities(
+                athlete['intervals_id'], athlete['name'], activities
+            )
+            all_alerts.extend(keyword_alerts)
+        else:
+            print(f"⚠️ Грешка при извличане на активности за {athlete['name']}: {act_status}")
 
     if all_alerts:
         print(f"Пращам {len(all_alerts)} нови аларми в Telegram...")
