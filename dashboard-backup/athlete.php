@@ -169,13 +169,31 @@ $alert_type_labels = [
         .year-nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
         .year-nav button { padding: 5px 12px; border-radius: 14px; font-size: 14px; border: none; background: #eceae4; color: var(--ink-2); cursor: pointer; }
         .year-nav button.active { background: #2250e3; color: white; }
+        /* Резултати по година — WT-results визуален език */
+        #results-table td { padding-top: 10px; padding-bottom: 10px; }
         .result-row { cursor: pointer; }
-        .result-row:hover td, .result-row:focus-visible td { background: #faf9f4; }
-        .result-row.open td { background: #f4f2ea; border-bottom-color: transparent; }
-        .result-detail td { background: #f7f6f0; padding: 10px 14px 12px; }
-        .splits-table { width: auto; }
-        .splits-table th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: none; padding: 0 22px 2px 0; }
-        .splits-table td { border-bottom: none; padding: 0 22px 0 0; font-size: 13px; }
+        .result-row td.event-date { color: var(--ink-2); }
+        .result-row td.event-name { font-weight: 600; color: var(--ink); }
+        .result-row td.total-time { font-weight: 700; font-size: 15px; }
+        .result-row:hover td, .result-row:focus-visible td { background: #f5f7ff; }
+        .result-row.open td { background: #eef1fb; border-bottom-color: transparent; }
+        .pos-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 34px; height: 28px; padding: 0 9px; border-radius: 8px; font-weight: 700; font-size: 15px; background: #eef1fb; color: #2250e3; }
+        .pos-badge.pos-gold   { background: #f6ecc8; color: #8a6d1a; }
+        .pos-badge.pos-silver { background: #ececec; color: #5f5f5f; }
+        .pos-badge.pos-bronze { background: #f3e2d0; color: #8a5a2a; }
+        .pos-badge.pos-dnx    { background: #f9e9e9; color: #b03a3a; font-size: 12px; letter-spacing: 0.03em; }
+        .result-detail td { background: transparent; padding: 0 0 14px; }
+        .split-panel { background: #fafbff; border: 1px solid #e4e8f7; border-left: 3px solid #2250e3; border-radius: 10px; padding: 14px 18px; }
+        .splits-grid { display: grid; grid-template-columns: repeat(5, minmax(90px, 1fr)); gap: 12px 18px; }
+        .split-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 3px; }
+        .split-time { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
+        .split-time--empty { color: var(--muted); font-weight: 400; }
+        .no-splits { color: var(--muted); font-style: italic; font-size: 13px; }
+        @media (max-width: 560px) {
+            .splits-grid { grid-template-columns: repeat(2, 1fr); }
+            .split-time { font-size: 16px; }
+            .split-panel { padding: 12px 14px; }
+        }
         .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 20px; }
         .tile { background: var(--surface); border-radius: 8px; padding: 14px 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
         .tile .label { font-size: 13px; color: var(--ink-2); }
@@ -341,37 +359,48 @@ $alert_type_labels = [
                         'Run'  => $r['run_split'] ?? null,
                     ];
                     $has_splits = count(array_filter($splits, fn($v) => $v !== null && $v !== '')) > 0;
+
+                    // Позицията като badge: подиумът получава злато/сребро/бронз
+                    // тониране, DNF/DSQ/LAP — приглушено червено, останалите — синьо.
+                    $pos = $r['position'];
+                    $pos_class = 'pos-badge';
+                    if ($pos !== null && $pos !== '' && is_numeric($pos)) {
+                        $p = (int)$pos;
+                        if ($p === 1) $pos_class .= ' pos-gold';
+                        elseif ($p === 2) $pos_class .= ' pos-silver';
+                        elseif ($p === 3) $pos_class .= ' pos-bronze';
+                    } elseif ($pos !== null && $pos !== '') {
+                        $pos_class .= ' pos-dnx';
+                    }
                 ?>
                 <tr class="result-row" data-year="<?= htmlspecialchars($row_year) ?>"
                     tabindex="0" role="button" aria-expanded="false"
                     <?= $row_year !== $default_year ? 'style="display:none;"' : '' ?>>
-                    <td><?= htmlspecialchars($r['event_date']) ?></td>
-                    <td class="msg"><?= htmlspecialchars($r['event_title'] ?? '—') ?></td>
-                    <td><?= $r['position'] !== null && $r['position'] !== '' ? htmlspecialchars($r['position']) : '—' ?></td>
-                    <td><?= $r['total_time'] !== null && $r['total_time'] !== '' ? htmlspecialchars($r['total_time']) : '—' ?></td>
+                    <td class="event-date"><?= htmlspecialchars($r['event_date']) ?></td>
+                    <td class="msg event-name"><?= htmlspecialchars($r['event_title'] ?? '—') ?></td>
+                    <td><?= $pos !== null && $pos !== ''
+                        ? '<span class="' . $pos_class . '">' . htmlspecialchars($pos) . '</span>'
+                        : '—' ?></td>
+                    <td class="total-time"><?= $r['total_time'] !== null && $r['total_time'] !== '' ? htmlspecialchars($r['total_time']) : '—' ?></td>
                 </tr>
                 <tr class="result-detail" data-year="<?= htmlspecialchars($row_year) ?>" style="display:none;">
                     <td colspan="4">
-                        <?php if ($has_splits): ?>
-                        <table class="splits-table">
-                            <thead>
-                                <tr>
-                                    <?php foreach (array_keys($splits) as $label): ?>
-                                        <th><?= $label ?></th>
-                                    <?php endforeach; ?>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr>
-                                    <?php foreach ($splits as $value): ?>
-                                        <td><?= $value !== null && $value !== '' ? htmlspecialchars($value) : '—' ?></td>
-                                    <?php endforeach; ?>
-                                </tr>
-                            </tbody>
-                        </table>
-                        <?php else: ?>
-                            <span class="empty">Няма детайлни данни</span>
-                        <?php endif; ?>
+                        <div class="split-panel">
+                            <?php if ($has_splits): ?>
+                            <div class="splits-grid">
+                                <?php foreach ($splits as $label => $value): ?>
+                                <div class="split-cell">
+                                    <div class="split-label"><?= $label ?></div>
+                                    <div class="split-time<?= ($value === null || $value === '') ? ' split-time--empty' : '' ?>">
+                                        <?= $value !== null && $value !== '' ? htmlspecialchars($value) : '—' ?>
+                                    </div>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <?php else: ?>
+                                <div class="no-splits">Няма детайлни данни</div>
+                            <?php endif; ?>
+                        </div>
                     </td>
                 </tr>
                 <?php endforeach; ?>
