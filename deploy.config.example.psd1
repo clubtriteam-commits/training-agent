@@ -6,4 +6,8 @@
 
     # Директорията, от която се сервира дашбордът (напр. public_html/dashboard)
     RemotePath = '/home/trailser/public_html/dashboard'
+
+    # (по избор) SSH ключ за автентикация без парола; махни реда, за да
+    # ползваш парола интерактивно
+    # KeyFile    = 'C:\Users\<you>\.ssh\id_ed25519'
 }
