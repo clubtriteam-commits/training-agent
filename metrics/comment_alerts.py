@@ -46,9 +46,18 @@ def check_comment_for_keywords(comment_text):
     return [kw for kw in _keywords_cache if kw.lower() in text]
 
 
+def _make_quote(text):
+    """Нормализирани интервали, до QUOTE_MAX_CHARS символа."""
+    quote = ' '.join(text.split())
+    if len(quote) > QUOTE_MAX_CHARS:
+        quote = quote[:QUOTE_MAX_CHARS] + '…'
+    return quote
+
+
 def analyze_new_activities(athlete_id, athlete_name, activities_list):
-    """Проверява description на всички невиждани досега активности за keywords.
-    Връща списък аларми (и ги записва в alerts_log)."""
+    """Проверява заглавието (name) и описанието (description) на всички
+    невиждани досега активности за keywords. Връща списък аларми (и ги
+    записва в alerts_log)."""
     alerts = []
 
     for activity in activities_list or []:
@@ -60,19 +69,21 @@ def analyze_new_activities(athlete_id, athlete_name, activities_list):
         if not mark_activity_seen(athlete_id, activity_id):
             continue
 
-        found = check_comment_for_keywords(activity.get('description'))
-        if not found:
-            continue
+        findings = []
+        for field_label, text in (('заглавие', activity.get('name')),
+                                  ('описание', activity.get('description'))):
+            found = check_comment_for_keywords(text)
+            if found:
+                findings.append(f"{field_label}: „{_make_quote(text)}“"
+                                f" — ключови думи: {', '.join(found)}")
 
-        # Цитат: нормализирани интервали, до QUOTE_MAX_CHARS символа
-        quote = ' '.join(activity.get('description').split())
-        if len(quote) > QUOTE_MAX_CHARS:
-            quote = quote[:QUOTE_MAX_CHARS] + '…'
+        if not findings:
+            continue
 
         activity_date = (activity.get('start_date_local') or '')[:10] or date.today().isoformat()
 
-        msg = (f"🩹 {athlete_name}: възможно оплакване в коментар към тренировка "
-               f"({activity_date}): „{quote}“ — ключови думи: {', '.join(found)}")
+        msg = (f"🩹 {athlete_name}: възможно оплакване в тренировка "
+               f"({activity_date}) — {'; '.join(findings)}")
         alerts.append(msg)
         log_alert(athlete_id, athlete_name, activity_date, 'comment_keyword', msg)
 
