@@ -87,7 +87,8 @@ $alerts = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $race_results = [];
 try {
     $stmt = $pdo->prepare("
-        SELECT event_date, event_title, position, total_time, event_country
+        SELECT event_date, event_title, position, total_time, event_country,
+               swim_split, t1_split, bike_split, t2_split, run_split
         FROM world_triathlon_results
         WHERE athlete_name = ? AND event_date IS NOT NULL
         ORDER BY event_date DESC
@@ -168,6 +169,13 @@ $alert_type_labels = [
         .year-nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
         .year-nav button { padding: 5px 12px; border-radius: 14px; font-size: 14px; border: none; background: #eceae4; color: var(--ink-2); cursor: pointer; }
         .year-nav button.active { background: #2250e3; color: white; }
+        .result-row { cursor: pointer; }
+        .result-row:hover td, .result-row:focus-visible td { background: #faf9f4; }
+        .result-row.open td { background: #f4f2ea; border-bottom-color: transparent; }
+        .result-detail td { background: #f7f6f0; padding: 10px 14px 12px; }
+        .splits-table { width: auto; }
+        .splits-table th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: none; padding: 0 22px 2px 0; }
+        .splits-table td { border-bottom: none; padding: 0 22px 0 0; font-size: 13px; }
         .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 20px; }
         .tile { background: var(--surface); border-radius: 8px; padding: 14px 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
         .tile .label { font-size: 13px; color: var(--ink-2); }
@@ -323,13 +331,48 @@ $alert_type_labels = [
                 <tr><th>Дата</th><th>Състезание</th><th>Позиция</th><th>Време</th></tr>
             </thead>
             <tbody>
-                <?php foreach ($race_results as $r): ?>
-                <tr data-year="<?= htmlspecialchars(substr($r['event_date'], 0, 4)) ?>"
-                    <?= substr($r['event_date'], 0, 4) !== $default_year ? 'style="display:none;"' : '' ?>>
+                <?php foreach ($race_results as $r):
+                    $row_year = substr($r['event_date'], 0, 4);
+                    $splits = [
+                        'Swim' => $r['swim_split'] ?? null,
+                        'T1'   => $r['t1_split'] ?? null,
+                        'Bike' => $r['bike_split'] ?? null,
+                        'T2'   => $r['t2_split'] ?? null,
+                        'Run'  => $r['run_split'] ?? null,
+                    ];
+                    $has_splits = count(array_filter($splits, fn($v) => $v !== null && $v !== '')) > 0;
+                ?>
+                <tr class="result-row" data-year="<?= htmlspecialchars($row_year) ?>"
+                    tabindex="0" role="button" aria-expanded="false"
+                    <?= $row_year !== $default_year ? 'style="display:none;"' : '' ?>>
                     <td><?= htmlspecialchars($r['event_date']) ?></td>
                     <td class="msg"><?= htmlspecialchars($r['event_title'] ?? '—') ?></td>
                     <td><?= $r['position'] !== null && $r['position'] !== '' ? htmlspecialchars($r['position']) : '—' ?></td>
                     <td><?= $r['total_time'] !== null && $r['total_time'] !== '' ? htmlspecialchars($r['total_time']) : '—' ?></td>
+                </tr>
+                <tr class="result-detail" data-year="<?= htmlspecialchars($row_year) ?>" style="display:none;">
+                    <td colspan="4">
+                        <?php if ($has_splits): ?>
+                        <table class="splits-table">
+                            <thead>
+                                <tr>
+                                    <?php foreach (array_keys($splits) as $label): ?>
+                                        <th><?= $label ?></th>
+                                    <?php endforeach; ?>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <?php foreach ($splits as $value): ?>
+                                        <td><?= $value !== null && $value !== '' ? htmlspecialchars($value) : '—' ?></td>
+                                    <?php endforeach; ?>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <?php else: ?>
+                            <span class="empty">Няма детайлни данни</span>
+                        <?php endif; ?>
+                    </td>
                 </tr>
                 <?php endforeach; ?>
             </tbody>
@@ -463,19 +506,47 @@ $alert_type_labels = [
         options: baseOptions({ reverse: true })
     });
 
-    // Филтър по година за "Резултати по година" — изцяло клиентски,
-    // без презареждане: показва само редовете с избраната година.
+    // "Резултати по година": филтър по година + разгъващи се сплитове.
+    // Всеки резултат е ДВОЙКА редове — .result-row (видим при съвпадаща
+    // година) и .result-detail (видим само след клик). Смяната на година
+    // прибира всички разгънати детайли, за да няма "осиротели" подредове.
     (function () {
         const nav = document.querySelector('.year-nav');
         if (!nav) return;
         const buttons = nav.querySelectorAll('button');
-        const rows = document.querySelectorAll('#results-table tbody tr');
+        const mainRows = document.querySelectorAll('#results-table tbody tr.result-row');
+        const detailRows = document.querySelectorAll('#results-table tbody tr.result-detail');
+
         nav.addEventListener('click', function (ev) {
             const btn = ev.target.closest('button');
             if (!btn) return;
             const year = btn.dataset.year;
             buttons.forEach(b => b.classList.toggle('active', b === btn));
-            rows.forEach(r => { r.style.display = r.dataset.year === year ? '' : 'none'; });
+            mainRows.forEach(r => {
+                r.style.display = r.dataset.year === year ? '' : 'none';
+                r.classList.remove('open');
+                r.setAttribute('aria-expanded', 'false');
+            });
+            detailRows.forEach(r => { r.style.display = 'none'; });
+        });
+
+        function toggleRow(row) {
+            const detail = row.nextElementSibling;
+            if (!detail || !detail.classList.contains('result-detail')) return;
+            const willOpen = detail.style.display === 'none';
+            detail.style.display = willOpen ? '' : 'none';
+            row.classList.toggle('open', willOpen);
+            row.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        }
+
+        mainRows.forEach(function (row) {
+            row.addEventListener('click', function () { toggleRow(row); });
+            row.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault();
+                    toggleRow(row);
+                }
+            });
         });
     }());
     </script>
