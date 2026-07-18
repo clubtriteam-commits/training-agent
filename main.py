@@ -7,6 +7,8 @@ from fetch_intervals import get_wellness, get_activities
 from metrics.acwr import analyze_athlete_acwr
 from metrics.readiness import analyze_readiness
 from metrics.comment_alerts import analyze_new_activities
+from metrics.late_start import analyze_late_starts
+from storage.db import filter_new_activities
 from alerts.notifier_telegram import send_alerts_batch
 
 
@@ -33,13 +35,23 @@ def run_daily_check():
         readiness_alerts = analyze_readiness(athlete['intervals_id'], athlete['name'])
         all_alerts.extend(readiness_alerts)
 
-        # Оплаквания в коментарите на новите (невиждани) активности
+        # Проверки върху новите (невиждани) активности: дедупликацията е
+        # обща, затова филтрираме веднъж и подаваме резултата на всички
         act_status, activities = get_activities(athlete['intervals_id'])
         if act_status == 200:
+            new_activities = filter_new_activities(athlete['intervals_id'], activities)
+
+            # Оплаквания в заглавие/коментар
             keyword_alerts = analyze_new_activities(
-                athlete['intervals_id'], athlete['name'], activities
+                athlete['intervals_id'], athlete['name'], new_activities
             )
             all_alerts.extend(keyword_alerts)
+
+            # Късно започнали тренировки (информативно)
+            late_alerts = analyze_late_starts(
+                athlete['intervals_id'], athlete['name'], new_activities
+            )
+            all_alerts.extend(late_alerts)
         else:
             print(f"⚠️ Грешка при извличане на активности за {athlete['name']}: {act_status}")
 

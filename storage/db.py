@@ -240,6 +240,17 @@ def mark_activity_seen(athlete_id, activity_id):
     return is_new
 
 
+def filter_new_activities(athlete_id, activities_list):
+    """Връща само невиждани досега активности и ги отбелязва като видени.
+    Единствената входна точка за дедупликация: всички проверки върху нови
+    активности (keywords, late start, ...) трябва да получават резултата
+    от тази функция, а не да викат mark_activity_seen() поотделно."""
+    return [
+        a for a in (activities_list or [])
+        if a.get('id') is not None and mark_activity_seen(athlete_id, a['id'])
+    ]
+
+
 def save_world_triathlon_ranking(athlete_id, athlete_name, world_ranking, regional_ranking):
     conn = get_connection()
     cur = conn.cursor()

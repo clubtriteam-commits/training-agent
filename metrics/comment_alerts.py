@@ -12,7 +12,7 @@ from datetime import date
 
 import yaml
 
-from storage.db import mark_activity_seen, log_alert
+from storage.db import log_alert
 
 KEYWORDS_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -54,21 +54,14 @@ def _make_quote(text):
     return quote
 
 
-def analyze_new_activities(athlete_id, athlete_name, activities_list):
-    """Проверява заглавието (name) и описанието (description) на всички
-    невиждани досега активности за keywords. Връща списък аларми (и ги
-    записва в alerts_log)."""
+def analyze_new_activities(athlete_id, athlete_name, new_activities):
+    """Проверява заглавието (name) и описанието (description) за keywords.
+    Очаква списък, вече филтриран през storage.db.filter_new_activities()
+    (дедупликацията е там, за да я споделят всички activity проверки).
+    Връща списък аларми (и ги записва в alerts_log)."""
     alerts = []
 
-    for activity in activities_list or []:
-        activity_id = activity.get('id')
-        if activity_id is None:
-            continue
-
-        # False = вече проверена при предишно пускане — прескачаме
-        if not mark_activity_seen(athlete_id, activity_id):
-            continue
-
+    for activity in new_activities or []:
         findings = []
         for field_label, text in (('заглавие', activity.get('name')),
                                   ('описание', activity.get('description'))):
