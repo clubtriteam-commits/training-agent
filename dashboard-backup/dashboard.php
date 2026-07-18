@@ -1,6 +1,7 @@
 <?php
 require_once 'includes/auth.php';
 require_once 'includes/db.php';
+require_once 'includes/metrics_glossary.php';
 require_login();
 
 $pdo = get_db_connection();
@@ -144,5 +145,7 @@ function status_badge($status) {
             </div>
         <?php endforeach; ?>
     </div>
+
+    <?php render_metrics_legend(); ?>
 </body>
 </html>

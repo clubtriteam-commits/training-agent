@@ -1,4 +1,4 @@
-# Деплой на PHP дашборда към сървъра през scp.
+﻿# Деплой на PHP дашборда към сървъра през scp.
 # Настройки: копирай deploy.config.example.psd1 -> deploy.config.psd1 и попълни.
 #
 #     .\deploy.ps1

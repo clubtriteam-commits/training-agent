@@ -1,6 +1,7 @@
 <?php
 require_once 'includes/auth.php';
 require_once 'includes/db.php';
+require_once 'includes/metrics_glossary.php';
 require_login();
 
 $pdo = get_db_connection();
@@ -335,6 +336,8 @@ $alert_type_labels = [
             <p class="empty">Няма резултати от състезания</p>
         <?php endif; ?>
     </div>
+
+    <?php render_metrics_legend(); ?>
 
     <script>
     const DATA = <?= json_encode($chart_data, JSON_UNESCAPED_UNICODE) ?>;
