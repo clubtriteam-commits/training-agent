@@ -3,13 +3,16 @@ World Triathlon API - тегли ranking и резултати за атлети
 """
 import os
 import sys
+import time
+
 import requests
 import yaml
 from dotenv import load_dotenv
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from storage.db import (init_db, save_world_triathlon_ranking,
-                        upsert_world_triathlon_result, count_world_triathlon_results)
+                        upsert_world_triathlon_result, count_world_triathlon_results,
+                        get_results_needing_positions, save_result_positions)
 from alerts.notifier_telegram import send_telegram_message
 
 load_dotenv('config/secrets.env')
@@ -70,6 +73,151 @@ def parse_splits(result):
         't2_split':   pick(3),
         'run_split':  pick(4),
     }
+
+
+# Позиция-колона → индекс в 'splits' масива на event results
+POSITION_SPLIT_INDEX = [
+    ('swim_position', 0),
+    ('t1_position',   1),
+    ('bike_position', 2),
+    ('t2_position',   3),
+    ('run_position',  4),
+]
+
+# Backlog защита: при инициално изчисление има стотици необработени
+# резултати — обработваме ги на порции през пусканията, не наведнъж.
+MAX_EVENT_FETCHES_PER_RUN = 40
+EVENT_FETCH_PAUSE_SECS = 0.5
+
+
+def parse_time_to_seconds(value):
+    """'H:MM:SS' или 'MM:SS' → секунди.
+
+    Празно, невалиден формат или '00:00:00' (така WT API-то маркира
+    липсващ сплит) → None.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    parts = value.strip().split(':')
+    if len(parts) not in (2, 3):
+        return None
+    try:
+        nums = [int(float(p)) for p in parts]
+    except ValueError:
+        return None
+    if len(nums) == 2:
+        nums = [0] + nums
+    total = nums[0] * 3600 + nums[1] * 60 + nums[2]
+    return total if total > 0 else None
+
+
+def get_event_program_results(event_id, prog_id):
+    """Всички участници (с техните splits) в дадена програма на събитие."""
+    url = f"{BASE_URL}/events/{event_id}/programs/{prog_id}/results"
+    response = requests.get(url, headers=get_headers())
+    if response.status_code != 200:
+        return response.status_code, []
+    data = response.json().get('data') or {}
+    # Резултатите са в data.results; защита, ако data е директно масив
+    participants = data.get('results') if isinstance(data, dict) else data
+    return 200, participants or []
+
+
+def is_ranked(participant):
+    """DNF/DNS/DSQ/LAP имат нечислова position — извън подредбата."""
+    pos = participant.get('position')
+    return isinstance(pos, int) or (isinstance(pos, str) and pos.strip().isdigit())
+
+
+def compute_split_positions(participants, our_athlete_id):
+    """Позицията на нашия атлет във всяка дисциплина.
+
+    В подредбата участват само класирани участници (is_ranked); липсващ
+    сплит вади участника от подредбата на съответната дисциплина. Равни
+    времена делят позиция във формат '=3'.
+
+    Връща dict {swim_position: '4' | '=2' | None, ...}.
+    """
+    positions = {key: None for key, _ in POSITION_SPLIT_INDEX}
+    ranked = [p for p in participants if is_ranked(p)]
+
+    our = next((p for p in ranked
+                if str(p.get('athlete_id')) == str(our_athlete_id)), None)
+    if our is None:
+        return positions
+
+    for key, idx in POSITION_SPLIT_INDEX:
+        times = []
+        for p in ranked:
+            splits = p.get('splits')
+            raw = splits[idx] if isinstance(splits, list) and idx < len(splits) else None
+            secs = parse_time_to_seconds(raw)
+            if secs is not None:
+                times.append((p, secs))
+
+        our_secs = next((secs for p, secs in times if p is our), None)
+        if our_secs is None:
+            continue
+
+        faster = sum(1 for _, secs in times if secs < our_secs)
+        tied = sum(1 for _, secs in times if secs == our_secs)
+        rank = faster + 1
+        positions[key] = f"={rank}" if tied > 1 else str(rank)
+
+    return positions
+
+
+def compute_missing_split_positions():
+    """Изчислява per-split позиции за резултатите, които нямат такива.
+
+    Rate limit защити: event results endpoint-ът се вика само за
+    необработени резултати (positions_computed_at IS NULL), веднъж на
+    (event, prog) двойка в рамките на пускане (двама наши атлети в едно
+    състезание = една заявка), с пауза между заявките и таван на брой
+    заявки за пускане.
+    """
+    pending = get_results_needing_positions()
+    if not pending:
+        print("Per-split позиции: няма необработени резултати")
+        return
+
+    cache = {}
+    fetches = computed = skipped = 0
+    for row in pending:
+        event_id, prog_id = row['event_id'], row['prog_id']
+
+        # Без prog_id не можем да построим event URL — маркираме като
+        # обработен, иначе ще опитваме до безкрай.
+        if not prog_id:
+            save_result_positions(row['athlete_id'], event_id, prog_id, {})
+            skipped += 1
+            continue
+
+        key = (event_id, prog_id)
+        if key not in cache:
+            if fetches >= MAX_EVENT_FETCHES_PER_RUN:
+                print(f"  Достигнат лимит от {MAX_EVENT_FETCHES_PER_RUN} event "
+                      f"заявки — остатъкът при следващото пускане")
+                break
+            status, participants = get_event_program_results(event_id, prog_id)
+            fetches += 1
+            time.sleep(EVENT_FETCH_PAUSE_SECS)
+            if status != 200:
+                print(f"  ⚠️ Event {event_id}/prog {prog_id}: HTTP {status}")
+                cache[key] = None
+            else:
+                cache[key] = participants
+
+        participants = cache[key]
+        if participants is None:
+            continue  # неуспешна заявка — без маркер, retry следващия път
+
+        positions = compute_split_positions(participants, row['athlete_id'])
+        save_result_positions(row['athlete_id'], event_id, prog_id, positions)
+        computed += 1
+
+    print(f"Per-split позиции: {computed} изчислени, {skipped} без prog_id, "
+          f"{fetches} event заявки")
 
 
 def build_new_result_message(athlete_name, event_title, event_date,
@@ -173,3 +321,4 @@ if __name__ == '__main__':
     init_db()  # гарантира, че world_triathlon_results съществува (IF NOT EXISTS)
     fetch_and_save_rankings()
     fetch_and_save_results()
+    compute_missing_split_positions()

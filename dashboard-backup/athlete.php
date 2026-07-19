@@ -88,7 +88,8 @@ $race_results = [];
 try {
     $stmt = $pdo->prepare("
         SELECT event_date, event_title, position, total_time, event_country,
-               swim_split, t1_split, bike_split, t2_split, run_split
+               swim_split, t1_split, bike_split, t2_split, run_split,
+               swim_position, t1_position, bike_position, t2_position, run_position
         FROM world_triathlon_results
         WHERE athlete_name = ? AND event_date IS NOT NULL
         ORDER BY event_date DESC
@@ -188,6 +189,8 @@ $alert_type_labels = [
         .split-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 3px; }
         .split-time { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
         .split-time--empty { color: var(--muted); font-weight: 400; }
+        /* Позиция в дисциплината под времето — WT-results стил: "(3)" / "(=1)" */
+        .split-pos { font-size: 12px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
         .no-splits { color: var(--muted); font-style: italic; font-size: 13px; }
         @media (max-width: 560px) {
             .splits-grid { grid-template-columns: repeat(2, 1fr); }
@@ -352,13 +355,13 @@ $alert_type_labels = [
                 <?php foreach ($race_results as $r):
                     $row_year = substr($r['event_date'], 0, 4);
                     $splits = [
-                        'Swim' => $r['swim_split'] ?? null,
-                        'T1'   => $r['t1_split'] ?? null,
-                        'Bike' => $r['bike_split'] ?? null,
-                        'T2'   => $r['t2_split'] ?? null,
-                        'Run'  => $r['run_split'] ?? null,
+                        'Swim' => ['time' => $r['swim_split'] ?? null, 'pos' => $r['swim_position'] ?? null],
+                        'T1'   => ['time' => $r['t1_split'] ?? null,   'pos' => $r['t1_position'] ?? null],
+                        'Bike' => ['time' => $r['bike_split'] ?? null, 'pos' => $r['bike_position'] ?? null],
+                        'T2'   => ['time' => $r['t2_split'] ?? null,   'pos' => $r['t2_position'] ?? null],
+                        'Run'  => ['time' => $r['run_split'] ?? null,  'pos' => $r['run_position'] ?? null],
                     ];
-                    $has_splits = count(array_filter($splits, fn($v) => $v !== null && $v !== '')) > 0;
+                    $has_splits = count(array_filter($splits, fn($s) => $s['time'] !== null && $s['time'] !== '')) > 0;
 
                     // Позицията като badge: подиумът получава злато/сребро/бронз
                     // тониране, DNF/DSQ/LAP — приглушено червено, останалите — синьо.
@@ -388,12 +391,17 @@ $alert_type_labels = [
                         <div class="split-panel">
                             <?php if ($has_splits): ?>
                             <div class="splits-grid">
-                                <?php foreach ($splits as $label => $value): ?>
+                                <?php foreach ($splits as $label => $s):
+                                    $has_time = $s['time'] !== null && $s['time'] !== '';
+                                ?>
                                 <div class="split-cell">
                                     <div class="split-label"><?= $label ?></div>
-                                    <div class="split-time<?= ($value === null || $value === '') ? ' split-time--empty' : '' ?>">
-                                        <?= $value !== null && $value !== '' ? htmlspecialchars($value) : '—' ?>
+                                    <div class="split-time<?= $has_time ? '' : ' split-time--empty' ?>">
+                                        <?= $has_time ? htmlspecialchars($s['time']) : '—' ?>
                                     </div>
+                                    <?php if ($has_time && $s['pos'] !== null && $s['pos'] !== ''): ?>
+                                    <div class="split-pos">(<?= htmlspecialchars($s['pos']) ?>)</div>
+                                    <?php endif; ?>
                                 </div>
                                 <?php endforeach; ?>
                             </div>

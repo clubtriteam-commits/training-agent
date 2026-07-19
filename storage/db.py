@@ -78,6 +78,9 @@ def init_db():
     # едно събитие може да даде няколко резултата за атлет (полуфинал +
     # финал, индивидуално + щафета), така че event_id сам не стига.
     # position е TEXT — API-то връща и "DNF"/"DSQ"/"LAP" освен числа.
+    # *_position колоните са TEXT заради формата за равни времена ("=3").
+    # positions_computed_at маркира, че event results endpoint-ът е викан
+    # за този резултат (дори когато не е дал позиции) — за rate limits.
     cur.execute('''
         CREATE TABLE IF NOT EXISTS world_triathlon_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,6 +98,12 @@ def init_db():
             bike_split TEXT,
             t2_split TEXT,
             run_split TEXT,
+            swim_position TEXT,
+            t1_position TEXT,
+            bike_position TEXT,
+            t2_position TEXT,
+            run_position TEXT,
+            positions_computed_at TEXT,
             fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(athlete_id, event_id, prog_id)
         )
@@ -106,7 +115,9 @@ def init_db():
     # не добавя колони към съществуваща таблица, затова ALTER при липса.
     cur.execute("PRAGMA table_info(world_triathlon_results)")
     existing_cols = {row[1] for row in cur.fetchall()}
-    for col in ('swim_split', 't1_split', 'bike_split', 't2_split', 'run_split'):
+    for col in ('swim_split', 't1_split', 'bike_split', 't2_split', 'run_split',
+                'swim_position', 't1_position', 'bike_position', 't2_position',
+                'run_position', 'positions_computed_at'):
         if col not in existing_cols:
             cur.execute(f"ALTER TABLE world_triathlon_results ADD COLUMN {col} TEXT")
 
@@ -210,6 +221,47 @@ def upsert_world_triathlon_result(athlete_id, athlete_name, event_id, prog_id,
     conn.commit()
     conn.close()
     return is_new
+
+
+def get_results_needing_positions():
+    """Резултати, за които event results endpoint-ът още не е викан.
+
+    Маркерът е positions_computed_at, а не самите позиции: резултат без
+    splits в event листинга остава с NULL позиции завинаги и не искаме
+    да го преизчисляваме (= нова API заявка) при всяко пускане.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        SELECT athlete_id, athlete_name, event_id, prog_id
+        FROM world_triathlon_results
+        WHERE positions_computed_at IS NULL
+        ORDER BY event_date DESC
+    ''')
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def save_result_positions(athlete_id, event_id, prog_id, positions):
+    """Записва per-split позициите и маркира резултата като обработен.
+
+    positions може да е празен dict (без данни за събитието) — пак
+    маркираме, за да не повтаряме заявката при следващите пускания.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        UPDATE world_triathlon_results
+        SET swim_position = ?, t1_position = ?, bike_position = ?,
+            t2_position = ?, run_position = ?,
+            positions_computed_at = CURRENT_TIMESTAMP
+        WHERE athlete_id = ? AND event_id = ? AND prog_id = ?
+    ''', (positions.get('swim_position'), positions.get('t1_position'),
+          positions.get('bike_position'), positions.get('t2_position'),
+          positions.get('run_position'), athlete_id, event_id, prog_id))
+    conn.commit()
+    conn.close()
 
 
 def count_world_triathlon_results(athlete_id):
