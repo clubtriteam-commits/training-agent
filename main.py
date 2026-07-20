@@ -18,6 +18,12 @@ from alerts.notifier_telegram import send_alerts_batch
 # промяна или fresh clone, което поваля cron redirect-а тихо.
 os.makedirs('logs', exist_ok=True)
 
+# При False: fetch/ACWR/readiness/keyword/late-start продължават да текат
+# нормално и алармите пак се записват в alerts_log (базата и dashboard-ът
+# остават актуални), но НЕ се push-ват в Telegram — само weekly_summary.py
+# праща там. Смени на True, за да се върнат дневните Telegram пушове.
+DAILY_TELEGRAM_ALERTS = False
+
 # Стъпките след "fetch" за конкретен атлет — реда, в който се отбелязват
 # като прескочени, ако fetch-ът на wellness се провали.
 STEPS_AFTER_FETCH = ("ACWR", "readiness", "keyword", "late-start")
@@ -119,11 +125,14 @@ def run_daily_check():
         except Exception as e:
             log_step_error(name, "late-start", e)
 
-    if all_alerts:
+    if not all_alerts:
+        print("Няма нови аларми за днес.")
+    elif DAILY_TELEGRAM_ALERTS:
         print(f"Пращам {len(all_alerts)} нови аларми в Telegram...")
         send_alerts_batch(all_alerts)
     else:
-        print("Няма нови аларми за днес.")
+        print(f"{len(all_alerts)} нови аларми записани в alerts_log "
+              f"(DAILY_TELEGRAM_ALERTS=False — Telegram push изключен за дневните аларми)")
 
 
 if __name__ == '__main__':
