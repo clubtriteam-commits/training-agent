@@ -15,6 +15,10 @@ from storage.db import (init_db, save_world_triathlon_ranking,
                         get_results_needing_positions, save_result_positions)
 from alerts.notifier_telegram import send_telegram_message
 
+# git не следи празни директории — logs/ може да липсва след .gitignore
+# промяна или fresh clone, което поваля cron redirect-а тихо.
+os.makedirs('logs', exist_ok=True)
+
 load_dotenv('config/secrets.env')
 API_KEY = os.getenv('WORLD_TRIATHLON_API_KEY')
 

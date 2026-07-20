@@ -11,12 +11,17 @@
 Пуска се самостоятелно (cron, неделя 8:00):
     0 8 * * 0 cd /home/trailser/training-agent && python weekly_summary.py
 """
+import os
 import sys
 from datetime import date, timedelta
 
 import yaml
 
 from storage.db import get_connection
+
+# git не следи празни директории — logs/ може да липсва след .gitignore
+# промяна или fresh clone, което поваля cron redirect-а тихо.
+os.makedirs('logs', exist_ok=True)
 
 # alerts/notifier_telegram.py съществува само на сървъра — локално
 # скриптът само печата съобщението (dry run).

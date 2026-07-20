@@ -2,6 +2,8 @@
 Главен orchestrator - тегли данни, изчислява метрики, праща аларми в Telegram.
 Пуска се през cron (дневно за аларми, седмично за пълен summary).
 """
+import os
+
 import yaml
 from fetch_intervals import get_wellness, get_activities
 from metrics.acwr import analyze_athlete_acwr
@@ -10,6 +12,10 @@ from metrics.comment_alerts import analyze_new_activities
 from metrics.late_start import analyze_late_starts
 from storage.db import filter_new_activities
 from alerts.notifier_telegram import send_alerts_batch
+
+# git не следи празни директории — logs/ може да липсва след .gitignore
+# промяна или fresh clone, което поваля cron redirect-а тихо.
+os.makedirs('logs', exist_ok=True)
 
 
 def run_daily_check():
