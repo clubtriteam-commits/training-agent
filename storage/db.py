@@ -50,6 +50,9 @@ def init_db():
         )
     ''')
 
+    # Архивна таблица от старата (pre-alert_events) dedup система. Никой код
+    # вече не пише тук — пазим я само защото stored production историята
+    # преди миграцията (виж migrate_alerts.py).
     cur.execute('''
         CREATE TABLE IF NOT EXISTS alerts_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,6 +62,27 @@ def init_db():
             alert_type TEXT NOT NULL,
             message TEXT NOT NULL,
             sent_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # "Събитието се създава веднъж, неизменно е, доставя се отделно."
+    # source_id различава множество аларми от един и същ тип/дата/атлет
+    # (напр. две активности с ключови думи в един ден) — NOT NULL DEFAULT ''
+    # нарочно, не NULL: SQLite третира NULL като различен от всеки друг NULL
+    # в UNIQUE индекс, така че NULL там би развалило dedup-а за ACWR/readiness
+    # (които винаги ползват source_id = '').
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS alert_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            athlete_id TEXT NOT NULL,
+            athlete_name TEXT NOT NULL,
+            event_date TEXT NOT NULL,
+            alert_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            source_id TEXT NOT NULL DEFAULT '',
+            detected_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            delivered_at TEXT,
+            UNIQUE(athlete_id, event_date, alert_type, source_id)
         )
     ''')
 
@@ -165,6 +189,50 @@ def get_previous_status(athlete_id, before_date):
     row = cur.fetchone()
     conn.close()
     return row['acwr_status'] if row else None
+
+
+def record_alert_event(athlete_id, athlete_name, event_date, alert_type, message, source_id=''):
+    """Записва аларма-събитие ЕДНОКРАТНО. Връща True само ако редът е нов.
+
+    Дедупликацията е гарантирана от UNIQUE(athlete_id, event_date, alert_type,
+    source_id) constraint-а на базата (INSERT OR IGNORE), не от код тук —
+    едно повторно преизчисление на същия ден/активност никога не създава
+    втори ред, дори при конкурентни извиквания."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        INSERT OR IGNORE INTO alert_events
+            (athlete_id, athlete_name, event_date, alert_type, message, source_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (athlete_id, athlete_name, event_date, alert_type, message, source_id))
+    is_new = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return is_new
+
+
+def get_undelivered_events():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        SELECT * FROM alert_events
+        WHERE delivered_at IS NULL
+        ORDER BY detected_at ASC
+    ''')
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def mark_delivered(event_id):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        UPDATE alert_events SET delivered_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    ''', (event_id,))
+    conn.commit()
+    conn.close()
 
 
 def alert_already_logged(athlete_id, date, alert_type):
