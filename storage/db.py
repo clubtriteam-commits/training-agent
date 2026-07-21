@@ -167,6 +167,24 @@ def get_previous_status(athlete_id, before_date):
     return row['acwr_status'] if row else None
 
 
+def alert_already_logged(athlete_id, date, alert_type):
+    """True ако за тази комбинация вече има запис в alerts_log.
+
+    Нужно е, защото wellness fetch прозорецът минава през последните 14 дни
+    при всяко пускане на main.py — без тази проверка същият исторически
+    преход (напр. ACWR се нормализира на 2026-07-09) се логва и праща
+    наново при всеки следващ cron run."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        SELECT COUNT(*) AS n FROM alerts_log
+        WHERE athlete_id = ? AND date = ? AND alert_type = ?
+    ''', (athlete_id, date, alert_type))
+    n = cur.fetchone()['n']
+    conn.close()
+    return n > 0
+
+
 def log_alert(athlete_id, athlete_name, date, alert_type, message):
     conn = get_connection()
     cur = conn.cursor()

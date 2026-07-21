@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from storage.db import upsert_daily_metric, get_previous_status, log_alert
+from storage.db import upsert_daily_metric, get_previous_status, log_alert, alert_already_logged
 
 
 def calculate_acwr(wellness_day):
@@ -60,18 +60,20 @@ def analyze_athlete_acwr(wellness_list, athlete_id, athlete_name, save_to_db=Tru
             )
 
             if prev_status is not None and prev_status != status:
+                alert_type, msg = None, None
                 if status == 'high':
+                    alert_type = 'acwr_high'
                     msg = f"⚠️ {athlete_name}: ACWR скочи на {acwr} ({date}) - риск от пренатоварване"
-                    alerts.append(msg)
-                    log_alert(athlete_id, athlete_name, date, 'acwr_high', msg)
                 elif status == 'low':
+                    alert_type = 'acwr_low'
                     msg = f"ℹ️ {athlete_name}: ACWR падна на {acwr} ({date}) - детрениране"
-                    alerts.append(msg)
-                    log_alert(athlete_id, athlete_name, date, 'acwr_low', msg)
                 elif status == 'ok' and prev_status in ('high', 'low'):
+                    alert_type = 'acwr_normalized'
                     msg = f"✅ {athlete_name}: ACWR се нормализира на {acwr} ({date})"
+
+                if alert_type and not alert_already_logged(athlete_id, date, alert_type):
                     alerts.append(msg)
-                    log_alert(athlete_id, athlete_name, date, 'acwr_normalized', msg)
+                    log_alert(athlete_id, athlete_name, date, alert_type, msg)
 
     return results, alerts
 
