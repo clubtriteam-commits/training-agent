@@ -9,7 +9,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from storage.db import get_connection
+from storage.db import get_connection, record_alert_event
 
 
 def get_recent_wellness(athlete_id, days=14):
@@ -113,21 +113,35 @@ def check_stress_alert(wellness_list, above_percent=10, baseline_days=7):
 
 
 def analyze_readiness(athlete_id, athlete_name):
-    """Обединява всички readiness проверки, връща списък аларми"""
+    """Обединява всички readiness проверки, връща списък НОВИ аларми
+    (записани за първи път в alert_events за event_date/alert_type
+    комбинацията — при многодневно продължаващо отклонение не се
+    преповтаря всеки ден)."""
     wellness_list = get_recent_wellness(athlete_id, days=14)
     alerts = []
 
+    if not wellness_list:
+        return alerts
+
+    event_date = wellness_list[0]['date']
+
     sleep_flag, sleep_msg = check_sleep_alert(wellness_list)
     if sleep_flag:
-        alerts.append(f"{sleep_msg} - {athlete_name}")
+        msg = f"{sleep_msg} - {athlete_name}"
+        if record_alert_event(athlete_id, athlete_name, event_date, 'readiness_sleep', msg):
+            alerts.append(msg)
 
     hrv_flag, hrv_msg = check_hrv_alert(wellness_list)
     if hrv_flag:
-        alerts.append(f"{hrv_msg} - {athlete_name}")
+        msg = f"{hrv_msg} - {athlete_name}"
+        if record_alert_event(athlete_id, athlete_name, event_date, 'readiness_hrv', msg):
+            alerts.append(msg)
 
     stress_flag, stress_msg = check_stress_alert(wellness_list)
     if stress_flag:
-        alerts.append(f"{stress_msg} - {athlete_name}")
+        msg = f"{stress_msg} - {athlete_name}"
+        if record_alert_event(athlete_id, athlete_name, event_date, 'readiness_stress', msg):
+            alerts.append(msg)
 
     return alerts
 

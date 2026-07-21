@@ -12,7 +12,7 @@ from datetime import date
 
 import yaml
 
-from storage.db import log_alert
+from storage.db import record_alert_event
 
 KEYWORDS_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -77,7 +77,9 @@ def analyze_new_activities(athlete_id, athlete_name, new_activities):
 
         msg = (f"🩹 {athlete_name}: възможно оплакване в тренировка "
                f"({activity_date}) — {'; '.join(findings)}")
-        alerts.append(msg)
-        log_alert(athlete_id, athlete_name, activity_date, 'comment_keyword', msg)
+        source_id = str(activity.get('id'))
+        if record_alert_event(athlete_id, athlete_name, activity_date, 'comment_keyword',
+                               msg, source_id=source_id):
+            alerts.append(msg)
 
     return alerts

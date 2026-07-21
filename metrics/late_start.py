@@ -6,7 +6,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from storage.db import log_alert
+from storage.db import record_alert_event
 
 # Тренировка, започнала СЛЕД този час (локално време), дава аларма
 LATE_START_THRESHOLD = '18:30'
@@ -37,7 +37,9 @@ def analyze_late_starts(athlete_id, athlete_name, new_activities):
         activity_name = activity.get('name') or 'тренировка'
         msg = (f"🌙 {athlete_name}: късна тренировка - {activity_name} "
                f"започна в {start_time} ({activity_date})")
-        alerts.append(msg)
-        log_alert(athlete_id, athlete_name, activity_date, 'late_start', msg)
+        source_id = str(activity.get('id'))
+        if record_alert_event(athlete_id, athlete_name, activity_date, 'late_start',
+                               msg, source_id=source_id):
+            alerts.append(msg)
 
     return alerts

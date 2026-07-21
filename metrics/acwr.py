@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from storage.db import upsert_daily_metric, get_previous_status, log_alert, alert_already_logged
+from storage.db import upsert_daily_metric, get_previous_status, record_alert_event
 
 
 def calculate_acwr(wellness_day):
@@ -71,9 +71,8 @@ def analyze_athlete_acwr(wellness_list, athlete_id, athlete_name, save_to_db=Tru
                     alert_type = 'acwr_normalized'
                     msg = f"✅ {athlete_name}: ACWR се нормализира на {acwr} ({date})"
 
-                if alert_type and not alert_already_logged(athlete_id, date, alert_type):
+                if alert_type and record_alert_event(athlete_id, athlete_name, date, alert_type, msg):
                     alerts.append(msg)
-                    log_alert(athlete_id, athlete_name, date, alert_type, msg)
 
     return results, alerts
 

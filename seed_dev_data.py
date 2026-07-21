@@ -9,7 +9,7 @@ import random
 import sqlite3
 from datetime import date, timedelta
 
-from storage.db import DB_PATH, init_db, upsert_daily_metric, log_alert
+from storage.db import DB_PATH, init_db, upsert_daily_metric, record_alert_event
 
 # (intervals_id за daily_metrics, world_triathlon_id за world_triathlon, име) —
 # двете таблици ползват РАЗЛИЧНИ ID-та, както на production
@@ -38,7 +38,7 @@ def seed():
 
     # Идемпотентност: чистим таблиците без unique constraint
     conn = sqlite3.connect(DB_PATH)
-    conn.execute("DELETE FROM alerts_log")
+    conn.execute("DELETE FROM alert_events")
     conn.execute("DELETE FROM world_triathlon")
     conn.commit()
     conn.close()
@@ -84,8 +84,8 @@ def seed():
             )
 
             if acwr and acwr > 1.3 and rng.random() < 0.4:
-                log_alert(athlete_id, name, day.isoformat(), "acwr_high",
-                          f"ACWR {acwr} — повишен риск от претрениране")
+                record_alert_event(athlete_id, name, day.isoformat(), "acwr_high",
+                                    f"ACWR {acwr} — повишен риск от претрениране")
 
         # Седмична история на ранкинга (с backdate на fetched_at)
         conn = sqlite3.connect(DB_PATH)
