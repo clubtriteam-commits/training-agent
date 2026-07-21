@@ -34,7 +34,7 @@ LOCK_PATH = os.path.join('logs', 'main.lock')
 # остават актуални), но deliver_pending_alerts() ги маркира delivered веднага
 # БЕЗ да ги праща в Telegram (само weekly_summary.py праща там). Смени на
 # True, за да се върнат дневните Telegram пушове.
-DAILY_TELEGRAM_ALERTS = False
+DAILY_TELEGRAM_ALERTS = True
 
 # Стъпките след "fetch" за конкретен атлет — реда, в който се отбелязват
 # като прескочени, ако fetch-ът на wellness се провали.
