@@ -6,7 +6,7 @@
   - последните 7 дни от daily_metrics (среден ACWR, тренд на CTL/ATL,
     последни HRV и сън, ако има данни)
   - последният world_triathlon запис, ако е обновен през седмицата
-  - брой пратени аларми през седмицата (alerts_log)
+  - брой аларми през седмицата (alert_events)
 
 Пуска се самостоятелно (cron, неделя 8:00):
     0 8 * * 0 cd /home/trailser/training-agent && python weekly_summary.py
@@ -122,8 +122,8 @@ def athlete_week_summary(conn, athlete_id, athlete_name, since):
             lines.append(f"  • Ranking: {' / '.join(rank_parts)}")
 
     cur.execute('''
-        SELECT COUNT(*) AS cnt FROM alerts_log
-        WHERE athlete_id = ? AND date >= ?
+        SELECT COUNT(*) AS cnt FROM alert_events
+        WHERE athlete_id = ? AND event_date >= ?
     ''', (athlete_id, since))
     alert_count = cur.fetchone()['cnt']
     if alert_count:

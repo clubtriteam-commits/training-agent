@@ -1,4 +1,5 @@
 <?php
+header('Cache-Control: no-store, no-cache, must-revalidate');
 require_once 'includes/auth.php';
 require_once 'includes/db.php';
 require_once 'includes/metrics_glossary.php';
@@ -71,10 +72,10 @@ $latest_ranking = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
 
 // История на алармите
 $stmt = $pdo->prepare("
-    SELECT date, alert_type, message, sent_at
-    FROM alerts_log
+    SELECT event_date, alert_type, message, detected_at
+    FROM alert_events
     WHERE athlete_id = ?
-    ORDER BY date DESC, sent_at DESC
+    ORDER BY event_date DESC, detected_at DESC
     LIMIT 50
 ");
 $stmt->execute([$athlete_id]);
@@ -136,10 +137,14 @@ $chart_data = [
 ];
 
 $alert_type_labels = [
-    'acwr_high'       => 'Висок ACWR',
-    'acwr_low'        => 'Нисък ACWR',
-    'comment_keyword' => 'Оплакване в коментар',
-    'late_start'      => 'Късна тренировка',
+    'acwr_high'        => 'Висок ACWR',
+    'acwr_low'         => 'Нисък ACWR',
+    'acwr_normalized'  => 'ACWR нормализиран',
+    'comment_keyword'  => 'Оплакване в коментар',
+    'late_start'       => 'Късна тренировка',
+    'readiness_sleep'  => 'Недостатъчен сън',
+    'readiness_hrv'    => 'Пад в HRV',
+    'readiness_stress' => 'Повишен стрес',
 ];
 ?>
 <!DOCTYPE html>
@@ -325,7 +330,7 @@ $alert_type_labels = [
                 <tbody>
                     <?php foreach ($alerts as $alert): ?>
                     <tr>
-                        <td><?= htmlspecialchars($alert['date']) ?></td>
+                        <td><?= htmlspecialchars($alert['event_date']) ?></td>
                         <td><?= htmlspecialchars($alert_type_labels[$alert['alert_type']] ?? $alert['alert_type']) ?></td>
                         <td class="msg"><?= htmlspecialchars($alert['message']) ?></td>
                     </tr>

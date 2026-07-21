@@ -1,4 +1,5 @@
 <?php
+header('Cache-Control: no-store, no-cache, must-revalidate');
 require_once 'includes/auth.php';
 require_once 'includes/db.php';
 require_once 'includes/metrics_glossary.php';
@@ -38,9 +39,9 @@ function get_latest_ranking($pdo, $athlete_name) {
 
 function get_recent_alerts($pdo, $athlete_id, $limit = 5) {
     $stmt = $pdo->prepare("
-        SELECT * FROM alerts_log
+        SELECT * FROM alert_events
         WHERE athlete_id = ?
-        ORDER BY sent_at DESC LIMIT ?
+        ORDER BY detected_at DESC LIMIT ?
     ");
     $stmt->bindValue(1, $athlete_id);
     $stmt->bindValue(2, $limit, PDO::PARAM_INT);
@@ -136,7 +137,7 @@ function status_badge($status) {
                     <strong>Последни аларми:</strong>
                     <?php if ($alerts): ?>
                         <?php foreach ($alerts as $alert): ?>
-                            <div class="alert-item"><?= htmlspecialchars($alert['date']) ?>: <?= htmlspecialchars($alert['message']) ?></div>
+                            <div class="alert-item"><?= htmlspecialchars($alert['event_date']) ?>: <?= htmlspecialchars($alert['message']) ?></div>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <p class="no-alerts">Няма аларми</p>
