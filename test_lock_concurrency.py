@@ -30,7 +30,8 @@ def test_concurrent_run_exits_immediately():
         result = subprocess.run(
             [sys.executable, "-c", "import main; main.acquire_lock(); print('LOCK_ACQUIRED')"],
             cwd=os.path.dirname(os.path.abspath(__file__)),
-            capture_output=True, text=True, timeout=15,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=15,
         )
 
         assert result.returncode == 0, \
