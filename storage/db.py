@@ -133,6 +133,34 @@ def init_db():
         )
     ''')
 
+    # Едно измерване на лактатен тест на стъпка: до 10 стъпки, HR/La могат
+    # да липсват за стъпки, до които атлетът не е стигнал (NULL, не 0 —
+    # 0 би изглеждал като реално измерена стойност в графиките).
+    step_cols = ', '.join(
+        f'step{i}_hr REAL, step{i}_la REAL' for i in range(1, 11)
+    )
+    cur.execute(f'''
+        CREATE TABLE IF NOT EXISTS lactate_tests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            test_date TEXT NOT NULL,
+            athlete_name TEXT NOT NULL,
+            protocol TEXT,
+            height_cm REAL,
+            weight_kg REAL,
+            age INTEGER,
+            ftp REAL,
+            w_kg REAL,
+            lactate_start REAL,
+            hr_start REAL,
+            {step_cols},
+            lt1_w REAL,
+            lt2_w REAL,
+            notes TEXT,
+            synced_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(athlete_name, test_date)
+        )
+    ''')
+
     cur.execute(SEEN_ACTIVITIES_SCHEMA)
 
     # Миграция за бази, създадени преди сплит колоните: CREATE IF NOT EXISTS
@@ -367,6 +395,47 @@ def save_world_triathlon_ranking(athlete_id, athlete_name, world_ranking, region
         INSERT INTO world_triathlon (athlete_id, athlete_name, world_ranking, regional_ranking)
         VALUES (?, ?, ?, ?)
     ''', (athlete_id, athlete_name, world_ranking, regional_ranking))
+    conn.commit()
+    conn.close()
+
+
+def upsert_lactate_test(test_date, athlete_name, protocol=None, height_cm=None,
+                         weight_kg=None, age=None, ftp=None, w_kg=None,
+                         lactate_start=None, hr_start=None, steps_hr=None,
+                         steps_la=None, lt1_w=None, lt2_w=None, notes=None):
+    """Insert/refresh лактатен тест по (athlete_name, test_date).
+
+    steps_hr/steps_la са списъци до 10 стойности (None за липсваща стъпка) —
+    подават се позиционно, стъпка 1 на индекс 0."""
+    steps_hr = (steps_hr or []) + [None] * (10 - len(steps_hr or []))
+    steps_la = (steps_la or []) + [None] * (10 - len(steps_la or []))
+    step_names = [f'step{i}_hr' for i in range(1, 11)] + [f'step{i}_la' for i in range(1, 11)]
+    step_values = steps_hr[:10] + steps_la[:10]
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(f'''
+        INSERT INTO lactate_tests
+            (test_date, athlete_name, protocol, height_cm, weight_kg, age,
+             ftp, w_kg, lactate_start, hr_start, {', '.join(step_names)},
+             lt1_w, lt2_w, notes)
+        VALUES ({', '.join(['?'] * (13 + len(step_names)))})
+        ON CONFLICT(athlete_name, test_date) DO UPDATE SET
+            protocol=excluded.protocol,
+            height_cm=excluded.height_cm,
+            weight_kg=excluded.weight_kg,
+            age=excluded.age,
+            ftp=excluded.ftp,
+            w_kg=excluded.w_kg,
+            lactate_start=excluded.lactate_start,
+            hr_start=excluded.hr_start,
+            {', '.join(f'{n}=excluded.{n}' for n in step_names)},
+            lt1_w=excluded.lt1_w,
+            lt2_w=excluded.lt2_w,
+            notes=excluded.notes,
+            synced_at=CURRENT_TIMESTAMP
+    ''', (test_date, athlete_name, protocol, height_cm, weight_kg, age,
+          ftp, w_kg, lactate_start, hr_start, *step_values, lt1_w, lt2_w, notes))
     conn.commit()
     conn.close()
 

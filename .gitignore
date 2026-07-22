@@ -1,5 +1,6 @@
 # Secrets and config with sensitive data
 config/secrets.env
+config/google-service-account.json
 deploy.config.psd1
 
 # Database
