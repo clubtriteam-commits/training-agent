@@ -18,6 +18,7 @@ from datetime import date, timedelta
 import yaml
 
 from storage.db import get_connection
+from metrics.acwr import in_rest_period
 
 # git не следи празни директории — logs/ може да липсва след .gitignore
 # промяна или fresh clone, което поваля cron redirect-а тихо.
@@ -32,12 +33,13 @@ except ImportError:
     TELEGRAM_AVAILABLE = False
 
 
-def acwr_emoji(acwr):
-    # Праговете следват metrics/acwr.py: безопасна зона 0.8–1.5
+def acwr_emoji(acwr, suppress_low=False):
+    # Праговете следват metrics/acwr.py: безопасна зона 0.8–1.5.
+    # suppress_low=True за атлет в rest_period — нисък ACWR е очакван, не аларма.
     if acwr is None:
         return "❔"
     if acwr < 0.8:
-        return "ℹ️"
+        return "😴" if suppress_low else "ℹ️"
     if acwr > 1.5:
         return "⚠️"
     return "✅"
@@ -60,7 +62,7 @@ def last_non_null(rows, key):
     return None
 
 
-def athlete_week_summary(conn, athlete_id, athlete_name, since):
+def athlete_week_summary(conn, athlete_id, athlete_name, since, rest_period=None, today=None):
     cur = conn.cursor()
 
     cur.execute('''
@@ -71,7 +73,11 @@ def athlete_week_summary(conn, athlete_id, athlete_name, since):
     ''', (athlete_id, since))
     days = cur.fetchall()
 
-    lines = [f"🏃 {athlete_name}"]
+    in_rest = today is not None and in_rest_period(today.isoformat(), rest_period)
+    header = athlete_name
+    if in_rest:
+        header += f" (в планирана почивка до {rest_period['to']})"
+    lines = [f"🏃 {header}"]
 
     if not days:
         lines.append("  • Няма данни за последните 7 дни")
@@ -79,7 +85,7 @@ def athlete_week_summary(conn, athlete_id, athlete_name, since):
         acwr_values = [d['acwr'] for d in days if d['acwr'] is not None]
         if acwr_values:
             avg_acwr = sum(acwr_values) / len(acwr_values)
-            lines.append(f"  • Среден ACWR: {avg_acwr:.2f} {acwr_emoji(avg_acwr)}")
+            lines.append(f"  • Среден ACWR: {avg_acwr:.2f} {acwr_emoji(avg_acwr, suppress_low=in_rest)}")
         else:
             lines.append("  • ACWR: няма данни")
 
@@ -143,7 +149,8 @@ def build_weekly_summary():
     sections = [f"📊 Седмичен отчет ({since} – {today.isoformat()})"]
     for athlete in config['athletes']:
         sections.append(athlete_week_summary(
-            conn, athlete['intervals_id'], athlete['name'], since
+            conn, athlete['intervals_id'], athlete['name'], since,
+            rest_period=athlete.get('rest_period'), today=today
         ))
     conn.close()
 

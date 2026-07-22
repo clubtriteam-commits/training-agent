@@ -135,7 +135,8 @@ def run_daily_check():
         # --- ACWR (записва в базата + връща аларми при преход) ---
         try:
             results, acwr_alerts = analyze_athlete_acwr(
-                wellness, athlete['intervals_id'], name
+                wellness, athlete['intervals_id'], name,
+                rest_period=athlete.get('rest_period')
             )
             log_step(name, "ACWR", True, f"{len(results)} дни обработени")
             all_alerts.extend(acwr_alerts)

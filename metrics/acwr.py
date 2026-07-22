@@ -11,6 +11,21 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from storage.db import upsert_daily_metric, get_previous_status, record_alert_event
 
 
+def in_rest_period(date_str, rest_period):
+    """True ако date_str (ISO 'YYYY-MM-DD') попада в rest_period {'from': ..., 'to': ...}
+    на атлета (двата края включени). rest_period=None или без from/to -> False.
+
+    Плоско сравнение на ISO дата-стрингове — работи коректно без datetime parsing,
+    защото ISO 8601 датите се сортират лексикографски както хронологично."""
+    if not rest_period:
+        return False
+    start = rest_period.get('from')
+    end = rest_period.get('to')
+    if not start or not end:
+        return False
+    return start <= date_str <= end
+
+
 def calculate_acwr(wellness_day):
     ctl = wellness_day.get('ctl')
     atl = wellness_day.get('atl')
@@ -30,7 +45,7 @@ def calculate_acwr(wellness_day):
     return round(acwr, 2), status
 
 
-def analyze_athlete_acwr(wellness_list, athlete_id, athlete_name, save_to_db=True):
+def analyze_athlete_acwr(wellness_list, athlete_id, athlete_name, save_to_db=True, rest_period=None):
     results = []
     alerts = []
 
@@ -62,11 +77,16 @@ def analyze_athlete_acwr(wellness_list, athlete_id, athlete_name, save_to_db=Tru
             if prev_status is not None and prev_status != status:
                 alert_type, msg = None, None
                 if status == 'high':
+                    # Претоварване по време на планирана почивка е ОЩЕ по-важен сигнал,
+                    # не по-малко — acwr_high не се потиска от rest_period.
                     alert_type = 'acwr_high'
                     msg = f"⚠️ {athlete_name}: ACWR скочи на {acwr} ({date}) - риск от пренатоварване"
                 elif status == 'low':
-                    alert_type = 'acwr_low'
-                    msg = f"ℹ️ {athlete_name}: ACWR падна на {acwr} ({date}) - детрениране"
+                    if in_rest_period(date, rest_period):
+                        pass  # очакван спад по време на почивка - не е аларма
+                    else:
+                        alert_type = 'acwr_low'
+                        msg = f"ℹ️ {athlete_name}: ACWR падна на {acwr} ({date}) - детрениране"
                 elif status == 'ok' and prev_status in ('high', 'low'):
                     alert_type = 'acwr_normalized'
                     msg = f"✅ {athlete_name}: ACWR се нормализира на {acwr} ({date})"
@@ -88,7 +108,8 @@ if __name__ == '__main__':
         status, wellness = get_wellness(athlete['intervals_id'])
         if status == 200:
             results, alerts = analyze_athlete_acwr(
-                wellness, athlete['intervals_id'], athlete['name']
+                wellness, athlete['intervals_id'], athlete['name'],
+                rest_period=athlete.get('rest_period')
             )
             print(f"\n{athlete['name']}:")
             for r in results:

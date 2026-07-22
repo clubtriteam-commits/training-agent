@@ -113,11 +113,88 @@ def test_retry_after_telegram_failure():
     print("  OK - Telegram провал не губи алармата, retry я доставя")
 
 
+def _seed_prev_day_status(athlete_id, date, status):
+    conn = db.get_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        INSERT INTO daily_metrics (athlete_id, athlete_name, date, ctl, atl, acwr, acwr_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (athlete_id, 'Test Athlete', date, 50, 50, 1.0, status))
+    conn.commit()
+    conn.close()
+
+
+def _alert_types_for(athlete_id, event_date):
+    conn = db.get_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        SELECT alert_type FROM alert_events
+        WHERE athlete_id = ? AND event_date = ?
+    ''', (athlete_id, event_date))
+    types = [row['alert_type'] for row in cur.fetchall()]
+    conn.close()
+    return types
+
+
+def test_rest_period_suppresses_acwr_low():
+    """Атлет с rest_period, покриващ event_date — нисък ACWR не генерира аларма."""
+    from metrics.acwr import analyze_athlete_acwr
+
+    _seed_prev_day_status('rest1', '2026-07-08', 'ok')
+    rest_period = {'from': '2026-07-05', 'to': '2026-07-12'}
+
+    # ctl=100, atl=70 -> acwr=0.7 -> 'low'
+    wellness_list = [{'id': '2026-07-09', 'ctl': 100, 'atl': 70}]
+    _, alerts = analyze_athlete_acwr(wellness_list, 'rest1', 'Test Athlete', rest_period=rest_period)
+
+    assert len(alerts) == 0, f"Очаквах 0 аларми по време на почивка, взех {len(alerts)}"
+    assert _alert_types_for('rest1', '2026-07-09') == [], \
+        "acwr_low не трябваше да се записва в alert_events по време на почивка"
+
+    print("  OK - rest_period потиска acwr_low")
+
+
+def test_no_rest_period_generates_acwr_low_normally():
+    """Атлет БЕЗ rest_period — нисък ACWR продължава да генерира аларма нормално."""
+    from metrics.acwr import analyze_athlete_acwr
+
+    _seed_prev_day_status('norest1', '2026-07-08', 'ok')
+
+    wellness_list = [{'id': '2026-07-09', 'ctl': 100, 'atl': 70}]
+    _, alerts = analyze_athlete_acwr(wellness_list, 'norest1', 'Test Athlete', rest_period=None)
+
+    assert len(alerts) == 1, f"Очаквах 1 аларма без rest_period, взех {len(alerts)}"
+    assert _alert_types_for('norest1', '2026-07-09') == ['acwr_low']
+
+    print("  OK - без rest_period acwr_low се генерира нормално")
+
+
+def test_acwr_high_ignores_rest_period():
+    """acwr_high се генерира независимо от активна почивка — претоварване по време
+    на планирана почивка е още по-важен сигнал, не по-малко."""
+    from metrics.acwr import analyze_athlete_acwr
+
+    _seed_prev_day_status('rest2', '2026-07-08', 'ok')
+    rest_period = {'from': '2026-07-05', 'to': '2026-07-12'}
+
+    # ctl=50, atl=90 -> acwr=1.8 -> 'high'
+    wellness_list = [{'id': '2026-07-09', 'ctl': 50, 'atl': 90}]
+    _, alerts = analyze_athlete_acwr(wellness_list, 'rest2', 'Test Athlete', rest_period=rest_period)
+
+    assert len(alerts) == 1, f"Очаквах 1 acwr_high аларма въпреки почивката, взех {len(alerts)}"
+    assert _alert_types_for('rest2', '2026-07-09') == ['acwr_high']
+
+    print("  OK - acwr_high не се потиска от rest_period")
+
+
 def main_test():
     tests = [
         test_dedup_across_runs,
         test_unique_constraint_on_recalculation,
         test_retry_after_telegram_failure,
+        test_rest_period_suppresses_acwr_low,
+        test_no_rest_period_generates_acwr_low_normally,
+        test_acwr_high_ignores_rest_period,
     ]
     for test in tests:
         print(f"{test.__name__}...")
