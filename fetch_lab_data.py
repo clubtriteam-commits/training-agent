@@ -13,6 +13,11 @@ from dotenv import load_dotenv
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from storage.db import init_db, upsert_lactate_test
 
+# Windows конзолата по подразбиране е cp1252 и не поддържа кирилица в print() —
+# при ръчно пускане (Linux/cron няма нужда, там stdout вече е UTF-8).
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 os.makedirs('logs', exist_ok=True)
 
 load_dotenv('config/secrets.env')
@@ -81,7 +86,7 @@ def sync_lactate_tests():
         upsert_lactate_test(
             test_date=test_date,
             athlete_name=athlete_name,
-            protocol=str(row.get('Протокол (М/Ж)', '')).strip() or None,
+            protocol=str(row.get('Протокол (М/Ж)') or row.get('Протокол') or '').strip() or None,
             height_cm=_num(row.get('Ръст')),
             weight_kg=_num(row.get('Тегло')),
             age=int(age) if age is not None else None,
