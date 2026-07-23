@@ -86,7 +86,7 @@ def sync_lactate_tests():
         upsert_lactate_test(
             test_date=test_date,
             athlete_name=athlete_name,
-            protocol=str(row.get('Протокол (М/Ж)') or row.get('Протокол') or '').strip() or None,
+            protocol=str(row.get('Протокол (М/Ж)') or row.get('Протокол') or row.get('Sex') or '').strip() or None,
             height_cm=_num(row.get('Ръст')),
             weight_kg=_num(row.get('Тегло')),
             age=int(age) if age is not None else None,
