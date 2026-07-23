@@ -101,6 +101,22 @@ try {
     $race_results = [];
 }
 
+// Лактатни тестове (fetch_lab_data.py, от Google Sheet; join по athlete_name
+// по същата причина като world_triathlon по-горе — Sheet-ът не познава intervals ID).
+// Таблицата може още да не съществува при стара база — прескачаме тихо.
+$lactate_tests = [];
+try {
+    $stmt = $pdo->prepare("
+        SELECT * FROM lactate_tests
+        WHERE athlete_name = ?
+        ORDER BY test_date DESC
+    ");
+    $stmt->execute([$athlete_name]);
+    $lactate_tests = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $lactate_tests = [];
+}
+
 // Наличните години (за бутоните), най-новата първа = избрана по подразбиране
 $result_years = array_values(array_unique(array_map(
     fn($r) => substr($r['event_date'], 0, 4),
@@ -424,6 +440,60 @@ $alert_type_labels = [
         <?php endif; ?>
     </div>
 
+    <div class="table-card" style="margin-top:20px;">
+        <h2>Лактатни тестове</h2>
+        <?php if ($lactate_tests): ?>
+        <table id="lactate-table">
+            <thead>
+                <tr><th>Дата</th><th>Протокол</th><th>FTP</th><th>W/kg</th><th>LT1 (W)</th><th>LT2 (W)</th></tr>
+            </thead>
+            <tbody>
+                <?php foreach ($lactate_tests as $t): ?>
+                <tr class="result-row lactate-row" tabindex="0" role="button" aria-expanded="false">
+                    <td class="event-date"><?= htmlspecialchars($t['test_date']) ?></td>
+                    <td><?= htmlspecialchars($t['protocol'] ?? '—') ?></td>
+                    <td><?= fmt($t['ftp'], 0) ?></td>
+                    <td><?= fmt($t['w_kg'], 2) ?></td>
+                    <td><?= fmt($t['lt1_w'], 0) ?></td>
+                    <td><?= fmt($t['lt2_w'], 0) ?></td>
+                </tr>
+                <tr class="result-detail lactate-detail" style="display:none;">
+                    <td colspan="6">
+                        <div class="split-panel">
+                            <p style="margin:0 0 10px;color:var(--ink-2);font-size:13px;">
+                                Ръст: <?= fmt($t['height_cm'], 0) ?> см ·
+                                Тегло: <?= fmt($t['weight_kg'], 1) ?> кг ·
+                                Възраст: <?= $t['age'] !== null ? (int)$t['age'] : '—' ?> ·
+                                Лактат старт: <?= fmt($t['lactate_start'], 1) ?> ммол/л ·
+                                Пулс старт: <?= fmt($t['hr_start'], 0) ?>
+                            </p>
+                            <div class="splits-grid" style="grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));">
+                                <?php for ($i = 1; $i <= 10; $i++):
+                                    $hr = $t["step{$i}_hr"];
+                                    $la = $t["step{$i}_la"];
+                                    if ($hr === null && $la === null) continue;
+                                ?>
+                                <div class="split-cell">
+                                    <div class="split-label">Стъпка <?= $i ?></div>
+                                    <div class="split-time"><?= fmt($hr, 0) ?> уд/мин</div>
+                                    <div class="split-pos"><?= fmt($la, 1) ?> ммол/л</div>
+                                </div>
+                                <?php endfor; ?>
+                            </div>
+                            <?php if (!empty($t['notes'])): ?>
+                            <p style="margin:10px 0 0;color:var(--ink-2);font-size:13px;"><strong>Бележки:</strong> <?= htmlspecialchars($t['notes']) ?></p>
+                            <?php endif; ?>
+                        </div>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php else: ?>
+            <p class="empty">Няма лактатни тестове</p>
+        <?php endif; ?>
+    </div>
+
     <?php render_metrics_legend(); ?>
 
     <script>
@@ -582,6 +652,28 @@ $alert_type_labels = [
         }
 
         mainRows.forEach(function (row) {
+            row.addEventListener('click', function () { toggleRow(row); });
+            row.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault();
+                    toggleRow(row);
+                }
+            });
+        });
+    }());
+
+    // Лактатни тестове: същото expand/collapse поведение, без year filter
+    // (тестовете са малко на брой — не си заслужава допълнителна навигация).
+    (function () {
+        function toggleRow(row) {
+            const detail = row.nextElementSibling;
+            if (!detail || !detail.classList.contains('lactate-detail')) return;
+            const willOpen = detail.style.display === 'none';
+            detail.style.display = willOpen ? '' : 'none';
+            row.classList.toggle('open', willOpen);
+            row.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        }
+        document.querySelectorAll('#lactate-table tbody tr.lactate-row').forEach(function (row) {
             row.addEventListener('click', function () { toggleRow(row); });
             row.addEventListener('keydown', function (ev) {
                 if (ev.key === 'Enter' || ev.key === ' ') {
