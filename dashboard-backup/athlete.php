@@ -3,6 +3,7 @@ header('Cache-Control: no-store, no-cache, must-revalidate');
 require_once 'includes/auth.php';
 require_once 'includes/db.php';
 require_once 'includes/metrics_glossary.php';
+require_once 'includes/lactate_zones.php';
 require_login();
 
 $pdo = get_db_connection();
@@ -139,6 +140,34 @@ function fmt($value, $decimals = 1) {
     return $value === null ? '—' : number_format((float)$value, $decimals);
 }
 
+// lactate_step_watts() идва от includes/lactate_zones.php — споделена и с
+// api_lactate.php/lactate_analysis.php, за да не се разминат изчисленията.
+
+// Traffic-light праг за лактат: <2 аеробно, 2-4 преходна зона, >4 анаеробно.
+function lactate_level_class($la) {
+    if ($la === null) return '';
+    if ($la < 2) return 'lt-low';
+    if ($la <= 4) return 'lt-mid';
+    return 'lt-high';
+}
+
+// Стъпката с мощност, най-близка до даден LT праг (за оцветяване на колоната).
+function lactate_nearest_step($active_steps, $protocol, $target_watts) {
+    if ($target_watts === null || !$active_steps) return null;
+    $best = null;
+    $best_diff = null;
+    foreach ($active_steps as $i) {
+        $w = lactate_step_watts($protocol, $i);
+        if ($w === null) continue;
+        $diff = abs($w - $target_watts);
+        if ($best_diff === null || $diff < $best_diff) {
+            $best_diff = $diff;
+            $best = $i;
+        }
+    }
+    return $best;
+}
+
 // Данни за Chart.js
 $chart_data = [
     'labels'      => array_column($metrics, 'date'),
@@ -213,6 +242,71 @@ $alert_type_labels = [
         /* Позиция в дисциплината под времето — WT-results стил: "(3)" / "(=1)" */
         .split-pos { font-size: 12px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
         .no-splits { color: var(--muted); font-style: italic; font-size: 13px; }
+
+        /* Лактатен тест: header лента с дата/FTP/W-kg над таблицата */
+        .lactate-panel-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-bottom: 8px; }
+        .lactate-panel-header .lt-date { font-size: 15px; font-weight: 700; color: var(--ink); }
+        .lactate-panel-header .lt-stat { font-size: 13px; color: var(--ink-2); }
+        .lactate-panel-header .lt-stat strong { color: #2250e3; font-size: 14px; }
+        .lactate-bio-line { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
+
+        /* Класически лактатен отчет: Мощност/HR/Lactate като редове, стъпките като колони.
+           Първата колона (row label) е sticky, за да остане видима при хоризонтален scroll. */
+        .lactate-table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid var(--grid); }
+        .lactate-steps-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+        .lactate-steps-table th {
+            position: sticky; left: 0; z-index: 1;
+            text-align: left; font-weight: 700; padding: 8px 14px 8px 10px;
+            white-space: nowrap; color: var(--ink-2);
+        }
+        .lactate-steps-table td {
+            text-align: center; min-width: 54px; padding: 7px 8px;
+            font-variant-numeric: tabular-nums; white-space: nowrap;
+            border-left: 1px solid var(--grid);
+        }
+        /* Мощност: удебелен, header-подобен фон, отделен с акцентна линия отдолу */
+        .lt-row-watts { background: #eef1fb; }
+        .lt-row-watts th { background: #eef1fb; color: var(--ink); }
+        .lt-row-watts td { font-weight: 700; color: var(--ink); border-bottom: 2px solid #2250e3; padding-bottom: 6px; }
+        /* HR: среден тон, тънки zebra колони за хоризонтално четене */
+        .lt-row-hr th { background: var(--surface); color: var(--ink-2); font-weight: 600; }
+        .lt-row-hr td { color: var(--ink-2); font-weight: 500; }
+        .lt-row-hr td:nth-child(even) { background: #fafbff; }
+        /* Lactate: badge-ове вместо суров текст, traffic-light цветове */
+        .lt-row-la th { background: var(--surface); color: var(--ink-2); font-weight: 600; }
+        .lt-row-la td { padding: 5px 6px; }
+        .lt-row-la td:nth-child(even) { background: #fafbff; }
+        .lt-badge {
+            display: inline-flex; align-items: center; justify-content: center;
+            min-width: 38px; padding: 3px 8px; border-radius: 7px;
+            font-weight: 700; font-size: 12px; font-variant-numeric: tabular-nums;
+        }
+        .lt-badge.lt-low  { background: #e5f3e6; color: #2e7d32; }
+        .lt-badge.lt-mid  { background: #fdecd2; color: #b8600a; }
+        .lt-badge.lt-high { background: #fbe2e2; color: #c62828; }
+        /* LT1/LT2 маркери: цветно подчертаване на цялата колона + малък таг под ватовете */
+        .lactate-steps-table td.lt1-col { box-shadow: inset 0 0 0 999px rgba(245, 124, 0, 0.10); }
+        .lactate-steps-table td.lt2-col { box-shadow: inset 0 0 0 999px rgba(198, 40, 40, 0.10); }
+        .lt-row-watts td.lt1-col { border-bottom-color: #f57c00; }
+        .lt-row-watts td.lt2-col { border-bottom-color: #c62828; }
+        .lt-tag {
+            display: block; margin: 2px auto 0; width: fit-content;
+            font-size: 9px; font-weight: 700; letter-spacing: 0.03em;
+            border-radius: 4px; padding: 1px 5px; color: white;
+        }
+        .lt-tag.lt1-tag { background: #f57c00; }
+        .lt-tag.lt2-tag { background: #c62828; }
+        .lt-analysis-btn {
+            display: inline-block; padding: 3px 10px; border-radius: 12px;
+            background: #eef1fb; color: #2250e3; font-size: 12px; font-weight: 600;
+            white-space: nowrap;
+        }
+        .lt-analysis-btn:hover { background: #2250e3; color: #ffffff; }
+        @media (max-width: 480px) {
+            .lactate-steps-table { font-size: 11px; }
+            .lactate-steps-table td { padding: 5px 5px; min-width: 44px; }
+            .lactate-steps-table th { padding: 6px 10px 6px 6px; }
+        }
         @media (max-width: 560px) {
             .splits-grid { grid-template-columns: repeat(2, 1fr); }
             .split-time { font-size: 16px; }
@@ -445,7 +539,7 @@ $alert_type_labels = [
         <?php if ($lactate_tests): ?>
         <table id="lactate-table">
             <thead>
-                <tr><th>Дата</th><th>Протокол</th><th>FTP</th><th>W/kg</th><th>LT1 (W)</th><th>LT2 (W)</th></tr>
+                <tr><th>Дата</th><th>Протокол</th><th>FTP</th><th>W/kg</th><th>LT1 (W)</th><th>LT2 (W)</th><th></th></tr>
             </thead>
             <tbody>
                 <?php foreach ($lactate_tests as $t): ?>
@@ -456,30 +550,79 @@ $alert_type_labels = [
                     <td><?= fmt($t['w_kg'], 2) ?></td>
                     <td><?= fmt($t['lt1_w'], 0) ?></td>
                     <td><?= fmt($t['lt2_w'], 0) ?></td>
+                    <td>
+                        <a class="lt-analysis-btn"
+                           href="lactate_analysis.php?test_id=<?= (int)$t['id'] ?>&amp;athlete_id=<?= urlencode($athlete_id) ?>"
+                           target="_blank" rel="noopener">📊 Анализ</a>
+                    </td>
                 </tr>
                 <tr class="result-detail lactate-detail" style="display:none;">
-                    <td colspan="6">
+                    <td colspan="7">
                         <div class="split-panel">
-                            <p style="margin:0 0 10px;color:var(--ink-2);font-size:13px;">
+                            <div class="lactate-panel-header">
+                                <span class="lt-date"><?= htmlspecialchars($t['test_date']) ?></span>
+                                <span class="lt-stat">FTP <strong><?= fmt($t['ftp'], 0) ?> W</strong></span>
+                                <span class="lt-stat"><strong><?= fmt($t['w_kg'], 2) ?></strong> W/kg</span>
+                            </div>
+                            <p class="lactate-bio-line">
                                 Ръст: <?= fmt($t['height_cm'], 0) ?> см ·
                                 Тегло: <?= fmt($t['weight_kg'], 1) ?> кг ·
                                 Възраст: <?= $t['age'] !== null ? (int)$t['age'] : '—' ?> ·
-                                Лактат старт: <?= fmt($t['lactate_start'], 1) ?> ммол/л ·
-                                Пулс старт: <?= fmt($t['hr_start'], 0) ?>
+                                Лактат старт: <?= fmt($t['lactate_start'], 1) ?> mmol ·
+                                Пулс старт: <?= fmt($t['hr_start'], 0) ?> HR
                             </p>
-                            <div class="splits-grid" style="grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));">
-                                <?php for ($i = 1; $i <= 10; $i++):
-                                    $hr = $t["step{$i}_hr"];
-                                    $la = $t["step{$i}_la"];
-                                    if ($hr === null && $la === null) continue;
-                                ?>
-                                <div class="split-cell">
-                                    <div class="split-label">Стъпка <?= $i ?></div>
-                                    <div class="split-time"><?= fmt($hr, 0) ?> уд/мин</div>
-                                    <div class="split-pos"><?= fmt($la, 1) ?> ммол/л</div>
-                                </div>
-                                <?php endfor; ?>
+                            <?php
+                                $active_steps = [];
+                                for ($i = 1; $i <= 10; $i++) {
+                                    if ($t["step{$i}_hr"] !== null || $t["step{$i}_la"] !== null) {
+                                        $active_steps[] = $i;
+                                    }
+                                }
+                                $lt1_step = lactate_nearest_step($active_steps, $t['protocol'], $t['lt1_w']);
+                                $lt2_step = lactate_nearest_step($active_steps, $t['protocol'], $t['lt2_w']);
+                            ?>
+                            <?php if ($active_steps): ?>
+                            <div class="lactate-table-wrap">
+                                <table class="lactate-steps-table">
+                                    <tbody>
+                                        <tr class="lt-row-watts">
+                                            <th>Мощност</th>
+                                            <?php foreach ($active_steps as $i):
+                                                $watts = lactate_step_watts($t['protocol'], $i);
+                                                $col_class = trim(($i === $lt1_step ? ' lt1-col' : '') . ($i === $lt2_step ? ' lt2-col' : ''));
+                                            ?>
+                                            <td class="<?= $col_class ?>">
+                                                <?= $watts !== null ? $watts . 'W' : 'Стъпка ' . $i ?>
+                                                <?php if ($i === $lt1_step): ?><span class="lt-tag lt1-tag">LT1</span><?php endif; ?>
+                                                <?php if ($i === $lt2_step): ?><span class="lt-tag lt2-tag">LT2</span><?php endif; ?>
+                                            </td>
+                                            <?php endforeach; ?>
+                                        </tr>
+                                        <tr class="lt-row-hr">
+                                            <th>HR</th>
+                                            <?php foreach ($active_steps as $i):
+                                                $col_class = trim(($i === $lt1_step ? ' lt1-col' : '') . ($i === $lt2_step ? ' lt2-col' : ''));
+                                            ?>
+                                            <td class="<?= $col_class ?>"><?= fmt($t["step{$i}_hr"], 0) ?></td>
+                                            <?php endforeach; ?>
+                                        </tr>
+                                        <tr class="lt-row-la">
+                                            <th>Lactate</th>
+                                            <?php foreach ($active_steps as $i):
+                                                $la = $t["step{$i}_la"];
+                                                $col_class = trim(($i === $lt1_step ? ' lt1-col' : '') . ($i === $lt2_step ? ' lt2-col' : ''));
+                                            ?>
+                                            <td class="<?= $col_class ?>">
+                                                <?php if ($la !== null): ?>
+                                                <span class="lt-badge <?= lactate_level_class($la) ?>"><?= fmt($la, 1) ?></span>
+                                                <?php else: ?>—<?php endif; ?>
+                                            </td>
+                                            <?php endforeach; ?>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
+                            <?php endif; ?>
                             <?php if (!empty($t['notes'])): ?>
                             <p style="margin:10px 0 0;color:var(--ink-2);font-size:13px;"><strong>Бележки:</strong> <?= htmlspecialchars($t['notes']) ?></p>
                             <?php endif; ?>
@@ -674,7 +817,11 @@ $alert_type_labels = [
             row.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
         }
         document.querySelectorAll('#lactate-table tbody tr.lactate-row').forEach(function (row) {
-            row.addEventListener('click', function () { toggleRow(row); });
+            // Клик върху "📊 Анализ" линка не бива да тригва expand/collapse на реда.
+            row.addEventListener('click', function (ev) {
+                if (ev.target.closest('a')) return;
+                toggleRow(row);
+            });
             row.addEventListener('keydown', function (ev) {
                 if (ev.key === 'Enter' || ev.key === ' ') {
                     ev.preventDefault();
