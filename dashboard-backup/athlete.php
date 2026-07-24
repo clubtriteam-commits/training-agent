@@ -140,6 +140,18 @@ function fmt($value, $decimals = 1) {
     return $value === null ? '—' : number_format((float)$value, $decimals);
 }
 
+// LT1/LT2 за overview таблицата: ръчна стойност от Sheet-а както си е,
+// естимирана (интерполирана) стойност — с приглушен "(est.)" суфикс,
+// за да не се бъркат двете на пръв поглед.
+function fmt_lt($value, $estimated) {
+    if ($value === null) return '—';
+    $text = round($value) . 'W';
+    if ($estimated) {
+        $text .= ' <span class="lt-est">(est.)</span>';
+    }
+    return $text;
+}
+
 // lactate_step_watts() идва от includes/lactate_zones.php — споделена и с
 // api_lactate.php/lactate_analysis.php, за да не се разминат изчисленията.
 
@@ -296,6 +308,7 @@ $alert_type_labels = [
         }
         .lt-tag.lt1-tag { background: #f57c00; }
         .lt-tag.lt2-tag { background: #c62828; }
+        .lt-est { font-style: italic; color: var(--muted); font-weight: 400; font-size: 11px; }
         .lt-analysis-btn {
             display: inline-block; padding: 3px 10px; border-radius: 12px;
             background: #eef1fb; color: #2250e3; font-size: 12px; font-weight: 600;
@@ -543,13 +556,41 @@ $alert_type_labels = [
             </thead>
             <tbody>
                 <?php foreach ($lactate_tests as $t): ?>
+                <?php
+                    // Изчислено веднъж на тест — служи и на summary реда (LT1/LT2
+                    // колоните), и на detail панела по-долу (table + column highlight).
+                    $active_steps = [];
+                    $lt_points = [];
+                    for ($i = 1; $i <= 10; $i++) {
+                        if ($t["step{$i}_hr"] !== null || $t["step{$i}_la"] !== null) {
+                            $active_steps[] = $i;
+                        }
+                        $lt_points[] = ['watts' => lactate_step_watts($t['protocol'], $i), 'la' => $t["step{$i}_la"]];
+                    }
+
+                    $lt1_w = $t['lt1_w'];
+                    $lt1_estimated = false;
+                    if ($lt1_w === null) {
+                        $lt1_w = lactate_interpolate_threshold($lt_points, 2.0);
+                        $lt1_estimated = $lt1_w !== null;
+                    }
+                    $lt2_w = $t['lt2_w'];
+                    $lt2_estimated = false;
+                    if ($lt2_w === null) {
+                        $lt2_w = lactate_interpolate_threshold($lt_points, 4.0);
+                        $lt2_estimated = $lt2_w !== null;
+                    }
+
+                    $lt1_step = lactate_nearest_step($active_steps, $t['protocol'], $lt1_w);
+                    $lt2_step = lactate_nearest_step($active_steps, $t['protocol'], $lt2_w);
+                ?>
                 <tr class="result-row lactate-row" tabindex="0" role="button" aria-expanded="false">
                     <td class="event-date"><?= htmlspecialchars($t['test_date']) ?></td>
                     <td><?= htmlspecialchars($t['protocol'] ?? '—') ?></td>
                     <td><?= fmt($t['ftp'], 0) ?></td>
                     <td><?= fmt($t['w_kg'], 2) ?></td>
-                    <td><?= fmt($t['lt1_w'], 0) ?></td>
-                    <td><?= fmt($t['lt2_w'], 0) ?></td>
+                    <td><?= fmt_lt($lt1_w, $lt1_estimated) ?></td>
+                    <td><?= fmt_lt($lt2_w, $lt2_estimated) ?></td>
                     <td>
                         <a class="lt-analysis-btn"
                            href="lactate_analysis.php?test_id=<?= (int)$t['id'] ?>&amp;athlete_id=<?= urlencode($athlete_id) ?>"
@@ -571,16 +612,6 @@ $alert_type_labels = [
                                 Лактат старт: <?= fmt($t['lactate_start'], 1) ?> mmol ·
                                 Пулс старт: <?= fmt($t['hr_start'], 0) ?> HR
                             </p>
-                            <?php
-                                $active_steps = [];
-                                for ($i = 1; $i <= 10; $i++) {
-                                    if ($t["step{$i}_hr"] !== null || $t["step{$i}_la"] !== null) {
-                                        $active_steps[] = $i;
-                                    }
-                                }
-                                $lt1_step = lactate_nearest_step($active_steps, $t['protocol'], $t['lt1_w']);
-                                $lt2_step = lactate_nearest_step($active_steps, $t['protocol'], $t['lt2_w']);
-                            ?>
                             <?php if ($active_steps): ?>
                             <div class="lactate-table-wrap">
                                 <table class="lactate-steps-table">

@@ -50,6 +50,14 @@ $compare = isset($_GET['compare']) ? $_GET['compare'] : '';
         .zone-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 8px; vertical-align: middle; }
         .empty { color: var(--muted); font-style: italic; font-size: 14px; }
         .lt-note { font-size: 11px; color: var(--muted); }
+        .lt-summary {
+            text-align: center; font-size: 20px; font-weight: 700;
+            margin: 14px 0; color: var(--ink);
+        }
+        .lt-summary .lt1-value { color: #2e7d32; }
+        .lt-summary .lt2-value { color: #c62828; }
+        .lt-summary .lt-est-suffix { font-size: 13px; font-weight: 400; font-style: italic; color: var(--muted); }
+        .lt-summary .lt-sep { color: var(--grid); margin: 0 10px; font-weight: 400; }
         #compareTable td.delta-good { color: #2e7d32; font-weight: 700; }
         #compareTable td.delta-bad { color: #c62828; font-weight: 700; }
         #compareTable td.delta-neutral { color: var(--ink-2); font-weight: 600; }
@@ -57,6 +65,7 @@ $compare = isset($_GET['compare']) ? $_GET['compare'] : '';
         @media (max-width: 480px) {
             body { padding: 12px; }
             .chart-wrap { height: 300px; }
+            .lt-summary { font-size: 16px; }
         }
     </style>
 </head>
@@ -78,6 +87,8 @@ $compare = isset($_GET['compare']) ? $_GET['compare'] : '';
     <div class="chart-card" id="chartCard" style="display:none;">
         <div class="chart-wrap"><canvas id="chartLactate"></canvas></div>
     </div>
+
+    <p class="lt-summary" id="ltSummary" style="display:none;"></p>
 
     <div class="table-card" id="zonesCard" style="display:none;">
         <h2>Зони</h2>
@@ -284,11 +295,33 @@ $compare = isset($_GET['compare']) ? $_GET['compare'] : '';
             metaEl.style.display = '';
 
             document.getElementById('chartCard').style.display = '';
+            renderLtSummary(data);
 
             if (data.zones && data.zones.length) {
                 document.getElementById('zonesCard').style.display = '';
                 buildZonesTable(data);
             }
+        }
+
+        // Едро текстово резюме на LT1/LT2 под графиката — "(est.)" само когато
+        // стойността е интерполирана, не въведена ръчно в Sheet-а.
+        function renderLtSummary(data) {
+            const el = document.getElementById('ltSummary');
+            if (data.lt1_w === null && data.lt2_w === null) {
+                el.style.display = 'none';
+                return;
+            }
+            const parts = [];
+            if (data.lt1_w !== null) {
+                parts.push('<span class="lt1-value">LT1: ' + Math.round(data.lt1_w) + 'W</span>' +
+                    (data.lt1_estimated ? ' <span class="lt-est-suffix">(est.)</span>' : ''));
+            }
+            if (data.lt2_w !== null) {
+                parts.push('<span class="lt2-value">LT2: ' + Math.round(data.lt2_w) + 'W</span>' +
+                    (data.lt2_estimated ? ' <span class="lt-est-suffix">(est.)</span>' : ''));
+            }
+            el.innerHTML = parts.join('<span class="lt-sep">|</span>');
+            el.style.display = '';
         }
 
         function makeSeries(test, field, color, dash, label) {
