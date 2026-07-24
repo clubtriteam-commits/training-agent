@@ -17,6 +17,32 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
     exit;
 }
 
+// Списък-режим за Фаза 2 (сравнение между тестове): ?athlete=NAME&list=1 ->
+// всички тестове на атлета, най-новите първи. Отделен клон, преди test_id
+// логиката по-долу, защото няма смисъл от test_id в този режим.
+if (isset($_GET['list']) && isset($_GET['athlete'])) {
+    $athlete_name = trim((string)$_GET['athlete']);
+    if ($athlete_name === '') {
+        http_response_code(400);
+        echo json_encode(['error' => 'missing athlete'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    $pdo = get_db_connection();
+    $stmt = $pdo->prepare('SELECT id, test_date, ftp, w_kg FROM lactate_tests WHERE athlete_name = ? ORDER BY test_date DESC');
+    $stmt->execute([$athlete_name]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $tests = array_map(function ($r) {
+        return [
+            'test_id'   => (int)$r['id'],
+            'test_date' => $r['test_date'],
+            'ftp'       => $r['ftp'] !== null ? (float)$r['ftp'] : null,
+            'w_kg'      => $r['w_kg'] !== null ? (float)$r['w_kg'] : null,
+        ];
+    }, $rows);
+    echo json_encode(['tests' => $tests], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 $test_id = isset($_GET['test_id']) ? (int)$_GET['test_id'] : 0;
 if ($test_id <= 0) {
     http_response_code(400);
