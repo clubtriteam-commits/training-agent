@@ -1,5 +1,11 @@
 <?php
-session_start();
+// includes/auth.php е единственото място, което конфигурира cookie params
+// преди session_start() — трябва да мине оттук, а не гол session_start(),
+// иначе сесията, създадена при логин, наследява PHP-default lifetime
+// (обикновено session-only / ~24 мин server-side GC) вместо 30-те дни,
+// които останалите страници очакват. Точно това причиняваше повторните
+// искания на парола.
+require_once 'includes/auth.php';
 require_once 'includes/config.php';
 $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
