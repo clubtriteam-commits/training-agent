@@ -38,15 +38,21 @@ function lactate_interpolate_threshold($points, $threshold) {
 
 // 5-зонов модел от LT1/LT2 (в watts). Връща [] ако някой от прагът липсва
 // (нито в базата, нито изчислим чрез интерполация).
+//
+// from_w/to_w се закръглят тук (1 десетичен) — без това PHP с
+// serialize_precision=100 (production, PHP 8.0 default) сериализира всяко
+// умножение като напр. 235.55555555555554000000... вместо чисто число.
+// json_encode() винаги минава изчистените стойности, независимо откъде
+// idва compute_zones() извикването.
 function compute_zones($lt1_w, $lt2_w) {
     if ($lt1_w === null || $lt2_w === null) {
         return [];
     }
     return [
-        ['name' => 'Z1 Recovery',  'from_w' => 0.0,            'to_w' => $lt1_w * 0.85, 'color' => 'rgba(76, 175, 80, 0.10)'],
-        ['name' => 'Z2 Endurance', 'from_w' => $lt1_w * 0.85,  'to_w' => $lt1_w,        'color' => 'rgba(76, 175, 80, 0.22)'],
-        ['name' => 'Z3 Tempo',     'from_w' => $lt1_w,         'to_w' => $lt2_w * 0.95, 'color' => 'rgba(255, 213, 79, 0.25)'],
-        ['name' => 'Z4 Threshold', 'from_w' => $lt2_w * 0.95,  'to_w' => $lt2_w * 1.05, 'color' => 'rgba(255, 152, 0, 0.28)'],
-        ['name' => 'Z5 VO2max+',   'from_w' => $lt2_w * 1.05,  'to_w' => null,          'color' => 'rgba(198, 40, 40, 0.22)'],
+        ['name' => 'Z1 Recovery',  'from_w' => 0.0,                        'to_w' => round($lt1_w * 0.85, 1), 'color' => 'rgba(76, 175, 80, 0.10)'],
+        ['name' => 'Z2 Endurance', 'from_w' => round($lt1_w * 0.85, 1),    'to_w' => round($lt1_w, 1),        'color' => 'rgba(76, 175, 80, 0.22)'],
+        ['name' => 'Z3 Tempo',     'from_w' => round($lt1_w, 1),           'to_w' => round($lt2_w * 0.95, 1), 'color' => 'rgba(255, 213, 79, 0.25)'],
+        ['name' => 'Z4 Threshold', 'from_w' => round($lt2_w * 0.95, 1),    'to_w' => round($lt2_w * 1.05, 1), 'color' => 'rgba(255, 152, 0, 0.28)'],
+        ['name' => 'Z5 VO2max+',   'from_w' => round($lt2_w * 1.05, 1),    'to_w' => null,                    'color' => 'rgba(198, 40, 40, 0.22)'],
     ];
 }

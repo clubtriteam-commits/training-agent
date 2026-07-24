@@ -7,6 +7,22 @@ require_once 'includes/lactate_zones.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
+// Production (PHP 8.0) има serialize_precision=100 в php.ini — json_encode()
+// печата всеки float с пълната IEEE754 опашка (напр. w_kg=3.9 излиза като
+// 3.899999999999999911182...), докато локалният dev PHP (8.3) използва
+// съвременния default (-1, "най-късото число, което се връща обратно
+// точно същото"). round() НЕ оправя това сам по себе си — закръглен float
+// пак си остава "мръсен" double под качулката; трябва изрично да върнем
+// -1 за целия отговор.
+ini_set('serialize_precision', -1);
+
+// round() тук е за смислена точност на изчислените стойности (напр. зоновите
+// прагове от умножения), не за да маха горния шум — това вече го прави
+// serialize_precision по-горе.
+function num_or_null($v, $decimals = 2) {
+    return $v !== null ? round((float)$v, $decimals) : null;
+}
+
 // Не викаме require_login() тук нарочно — тя прави header('Location: index.php')
 // при липсваща сесия, което fetch() просто следва мълчаливо и връща index.php-ѝ
 // HTML вместо JSON. Auth.php вече е стартирал сесията отгоре; проверяваме я
@@ -35,8 +51,8 @@ if (isset($_GET['list']) && isset($_GET['athlete'])) {
         return [
             'test_id'   => (int)$r['id'],
             'test_date' => $r['test_date'],
-            'ftp'       => $r['ftp'] !== null ? (float)$r['ftp'] : null,
-            'w_kg'      => $r['w_kg'] !== null ? (float)$r['w_kg'] : null,
+            'ftp'       => num_or_null($r['ftp']),
+            'w_kg'      => num_or_null($r['w_kg']),
         ];
     }, $rows);
     echo json_encode(['tests' => $tests], JSON_UNESCAPED_UNICODE);
@@ -66,8 +82,8 @@ if (!$t) {
 $steps = [];
 $points = [];
 for ($i = 1; $i <= 10; $i++) {
-    $hr = $t["step{$i}_hr"] !== null ? (float)$t["step{$i}_hr"] : null;
-    $la = $t["step{$i}_la"] !== null ? (float)$t["step{$i}_la"] : null;
+    $hr = num_or_null($t["step{$i}_hr"], 0);
+    $la = num_or_null($t["step{$i}_la"], 1);
     if ($hr === null && $la === null) {
         continue;
     }
@@ -97,13 +113,13 @@ echo json_encode([
     'athlete_name'  => $t['athlete_name'],
     'test_date'     => $t['test_date'],
     'protocol'      => $t['protocol'],
-    'ftp'           => $t['ftp'] !== null ? (float)$t['ftp'] : null,
-    'w_kg'          => $t['w_kg'] !== null ? (float)$t['w_kg'] : null,
-    'height'        => $t['height_cm'] !== null ? (float)$t['height_cm'] : null,
-    'weight'        => $t['weight_kg'] !== null ? (float)$t['weight_kg'] : null,
+    'ftp'           => num_or_null($t['ftp'], 0),
+    'w_kg'          => num_or_null($t['w_kg']),
+    'height'        => num_or_null($t['height_cm'], 0),
+    'weight'        => num_or_null($t['weight_kg'], 1),
     'age'           => $t['age'] !== null ? (int)$t['age'] : null,
-    'lactate_rest'  => $t['lactate_start'] !== null ? (float)$t['lactate_start'] : null,
-    'hr_rest'       => $t['hr_start'] !== null ? (float)$t['hr_start'] : null,
+    'lactate_rest'  => num_or_null($t['lactate_start']),
+    'hr_rest'       => num_or_null($t['hr_start'], 0),
     'steps'         => $steps,
     'lt1_w'         => $lt1_w !== null ? round($lt1_w, 1) : null,
     'lt2_w'         => $lt2_w !== null ? round($lt2_w, 1) : null,
