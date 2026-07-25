@@ -22,6 +22,13 @@ Data integrity audit — standalone, read-only checks across data/agent.db.
   5. Wellness data freshness — атлети, за които daily_metrics не се е
      обновявал скоро (възможен признак, че fetch-ът за този атлет чупи
      тихо, докато останалите вървят нормално).
+  6. Referential integrity в новите Sheet-таблици — local_results редове
+     без съответен local_events.event_id, nat_functional_tests редове без
+     съответен nat_test_protocols.protocol. И двете сочат счупен sync
+     (частично обновена база) или ръчна редакция извън sync скриптовете.
+
+Проверка 1 покрива и athlete_name за lactate_tests/local_results/
+nat_functional_tests — и трите имат само име, без athlete ID (виж ADR 0004).
 
 Изходен код: 0 ако няма находки, 1 ако има поне едно предупреждение —
 удобно за бъдеща автоматизация (напр. cron ред, който маха резултата
@@ -117,13 +124,14 @@ def check_orphans(conn, athletes, report):
                     f"{table}: athlete_id '{row['athlete_id']}' не е в config/athletes.yaml (world_triathlon_id)"
                 )
 
-    cur.execute("SELECT DISTINCT athlete_name FROM lactate_tests")
-    for row in cur.fetchall():
-        if row['athlete_name'] not in known_names:
-            entries.append(
-                f"lactate_tests: athlete_name '{row['athlete_name']}' не е в config/athletes.yaml — "
-                f"проверка за печатна грешка в Sheet-а или изтрит/преименуван атлет (виж ADR 0003/0004)"
-            )
+    for table in ('lactate_tests', 'local_results', 'nat_functional_tests'):
+        cur.execute(f"SELECT DISTINCT athlete_name FROM {table}")
+        for row in cur.fetchall():
+            if row['athlete_name'] not in known_names:
+                entries.append(
+                    f"{table}: athlete_name '{row['athlete_name']}' не е в config/athletes.yaml — "
+                    f"проверка за печатна грешка в Sheet-а или изтрит/преименуван атлет (виж ADR 0003/0004)"
+                )
 
 
 def check_name_consistency(conn, athletes, report):
@@ -256,6 +264,32 @@ def check_wellness_freshness(conn, athletes, stale_days, report):
             )
 
 
+def check_new_tables_referential_integrity(conn, report):
+    entries = report.section("6. Referential integrity (local_results/nat_functional_tests)")
+    cur = conn.cursor()
+
+    cur.execute("SELECT DISTINCT event_id FROM local_events")
+    known_events = {row['event_id'] for row in cur.fetchall()}
+    cur.execute("SELECT DISTINCT event_id, athlete_name FROM local_results")
+    for row in cur.fetchall():
+        if row['event_id'] not in known_events:
+            entries.append(
+                f"local_results: event_id '{row['event_id']}' (athlete_name='{row['athlete_name']}') "
+                f"няма съответен ред в local_events — счупен sync или ръчна редакция"
+            )
+
+    cur.execute("SELECT DISTINCT protocol FROM nat_test_protocols")
+    known_protocols = {row['protocol'] for row in cur.fetchall()}
+    cur.execute("SELECT DISTINCT protocol, athlete_name, test_date FROM nat_functional_tests")
+    for row in cur.fetchall():
+        if row['protocol'] not in known_protocols:
+            entries.append(
+                f"nat_functional_tests: protocol '{row['protocol']}' (athlete_name='{row['athlete_name']}', "
+                f"test_date={row['test_date']}) няма съответен ред в nat_test_protocols — "
+                f"счупен sync или ръчна редакция"
+            )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--stale-days', type=int, default=DEFAULT_STALE_DAYS,
@@ -272,6 +306,7 @@ def main():
         check_alerts_log_drift(conn, report)
         check_lactate_step_continuity(conn, report)
         check_wellness_freshness(conn, athletes, args.stale_days, report)
+        check_new_tables_referential_integrity(conn, report)
     finally:
         conn.close()
 

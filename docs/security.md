@@ -2,17 +2,17 @@
 
 ## Резюме (Executive Summary)
 
-Дашбордът защитава достъпа с една обща парола (не индивидуални акаунти) и сесийна бисквитка, валидна 30 дни. Тайните (API ключове, пароли) се пазят в файлове, изключени от git — никога не влизат в хранилището на кода. **Важно и честно:** към момента на писане на този документ, проверката за парола на живия сайт е временно изключена (за тестови цели, вижте бележката по-долу) — dashboard-ът е публично достъпен без парола. Това трябва да се върне обратно преди да се разчита на този документ като описание на реалната защита в момента.
+Дашбордът защитава достъпа с една обща парола (не индивидуални акаунти) и сесийна бисквитка, валидна 30 дни. Тайните (API ключове, пароли) се пазят в файлове, изключени от git — никога не влизат в хранилището на кода. Има **повтарящ се риск**, документиран честно по-долу: временен bypass на паролата, използван за тестване, който вече се е случвал три пъти в историята на проекта — винаги върнат обратно след употреба, но всеки път ръчно, без автоматична защита срещу забравяне.
 
 ---
 
-## ⚠️ Current live status (as of this writing)
+## ⚠️ Recurring risk: the auth bypass workaround
 
-**The password check is currently bypassed on production.** `dashboard-backup/includes/auth.php`'s `require_login()` has an early `return;` inserted, deliberately, for interactive testing during active development. This is documented honestly here rather than glossed over — the rest of this document describes the **intended/normal** security model, which is not what's currently enforced live.
+**As of this writing, the password check is enforced normally — the bypass is currently OFF.** But it's worth understanding as a live risk pattern, not just history: `dashboard-backup/includes/auth.php`'s `require_login()` can be (and has been, three times: 2026-07-23, 2026-07-24, 2026-07-24 again) temporarily patched with an early `return;`, deliberately, for interactive testing during active development without repeatedly re-entering the password. Each time, it was reverted before or shortly after the work session ended.
 
-To check whether the bypass is still active: `curl` `dashboard.php` on the production URL with no session cookie — a `200` response with dashboard content (instead of a `302` redirect to `index.php`) means it's still open. To revert: remove the early `return;` from `require_login()` in `includes/auth.php` and redeploy via `deploy.ps1`.
+**To check whether the bypass is currently active:** `curl` `dashboard.php` on the production URL with no session cookie (and a cache-busting query param — see the `sh-cache` note in [ADR 0007](adr/0007-limitations.md), a stale cached response can otherwise look like either state) — a `200` response with dashboard content (instead of a `302` redirect to `index.php`) means it's open. To revert: remove the early `return;` from `require_login()` in `includes/auth.php` and redeploy via `deploy.ps1`.
 
-This has happened twice in this project's history (2026-07-23, 2026-07-24) as a recurring "I need to test without re-logging-in" workaround. It is not committed to git either time (kept as a local, uncommitted change specifically so it can't accidentally ship via a normal `git pull`-based deploy) — but `deploy.ps1` deploys whatever's in the local working copy regardless of git status, so it *does* reach production. See [runbook.md](runbook.md) for the "how do I tell if this is on" checklist.
+The bypass is never committed to git (kept as a local, uncommitted change specifically so it can't accidentally ship via a normal `git pull`-based deploy) — but `deploy.ps1` deploys whatever's in the local working copy regardless of git status, so it *does* reach production every time it's active. There is no automated check or alert that would catch "the bypass has been live on production for N days" — reverting it depends entirely on someone remembering. See [runbook.md](runbook.md) for the full checklist.
 
 ## Auth model
 
@@ -31,16 +31,16 @@ This has happened twice in this project's history (2026-07-23, 2026-07-24) as a 
 
 | Location | Contents | In git? |
 |---|---|---|
-| `config/secrets.env` | `DASHBOARD_PASSWORD`, `INTERVALS_API_KEY`, `WORLD_TRIATHLON_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `LACTATE_SHEET_ID` | **No** — `.gitignore`d. Loaded via `python-dotenv`; PHP reads it with a regex (`index.php`) rather than a proper `.env` parser. |
-| `config/google-service-account.json` | Google Cloud service account private key, used by `fetch_lab_data.py` to authenticate to Sheets/Drive APIs | **No** — `.gitignore`d. `chmod 600` on the server. |
+| `config/secrets.env` | `DASHBOARD_PASSWORD`, `INTERVALS_API_KEY`, `WORLD_TRIATHLON_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `LACTATE_SHEET_ID`, `LOCAL_RESULTS_SHEET_ID`, `NAT_TESTS_SHEET_ID` | **No** — `.gitignore`d. Loaded via `python-dotenv`; PHP reads it with a regex (`index.php`) rather than a proper `.env` parser. Added to the server copy manually each time — it's `.gitignore`d there too, so `git pull` never brings a new key across; see [workflows.md](workflows.md) for the manual-secret-add step in each Sheets-integration's deploy sequence. |
+| `config/google-service-account.json` | Google Cloud service account private key, shared by `fetch_lab_data.py`, `fetch_local_results.py`, and `fetch_nat_tests.py` to authenticate to Sheets/Drive APIs | **No** — `.gitignore`d. `chmod 600` on the server. |
 | `deploy.config.psd1` | SSH host/user/port, optional path to a local SSH private key | **No** — `.gitignore`d (`deploy.config.example.psd1` is the checked-in template with placeholder values). |
 | SSH private key (referenced by `deploy.config.psd1`'s `KeyFile`) | Passwordless SSH auth for `deploy.ps1` | Lives outside the repo entirely (`~/.ssh/`), never touches git. |
 
-**`LACTATE_SHEET_ID` is not itself sensitive** (a Sheet ID is not a credential — access is controlled by Google's sharing permissions, not by knowing the ID) but lives alongside real secrets in the same file for convenience.
+**None of the three `*_SHEET_ID` values are themselves sensitive** (a Sheet ID is not a credential — access is controlled by Google's sharing permissions, not by knowing the ID) but they live alongside real secrets in the same file for convenience.
 
 ### Google service account scope
 
-`fetch_lab_data.py` requests **`spreadsheets.readonly`** scope only — the routine sync can never write to the source Sheet, regardless of bugs in the sync code. When a lactate-test data-entry error needed manual correction directly in the Sheet (has happened — see [ADR 0003](adr/0003-google-sheets-lab-source.md)), that required a separate, temporary, manually-authorized script requesting the broader `spreadsheets` (read-write) scope for that one operation — not a standing capability.
+All three Sheets-sync scripts (`fetch_lab_data.py`, `fetch_local_results.py`, `fetch_nat_tests.py`) request **`spreadsheets.readonly`** scope only, using the same shared service account — the routine sync can never write to any source Sheet, regardless of bugs in the sync code. When a lactate-test data-entry error needed manual correction directly in the Sheet (has happened — see [ADR 0003](adr/0003-google-sheets-lab-source.md)), that required a separate, temporary, manually-authorized script requesting the broader `spreadsheets` (read-write) scope for that one operation — not a standing capability.
 
 ## Known risks
 
@@ -48,4 +48,4 @@ This has happened twice in this project's history (2026-07-23, 2026-07-24) as a 
 - **No rate limiting on login.** `index.php` accepts unlimited password attempts with no lockout, throttling, or CAPTCHA. The production WAF (see [ADR 0007](adr/0007-limitations.md)) may incidentally rate-limit at the infrastructure level for non-browser traffic, but this isn't a designed protection and shouldn't be relied on as one.
 - **No explicit HTTPS enforcement in application code.** The site is served over HTTPS in practice (hosting-level), but nothing in `index.php`/`auth.php` checks `$_SERVER['HTTPS']` or redirects an accidental plain-HTTP request — if the hosting's HTTPS redirect were ever misconfigured, session cookies could be transmitted in the clear with no application-level safety net. `session_set_cookie_params()` does not set the `secure` flag.
 - **Session fixation / no session regeneration on login.** `index.php` doesn't call `session_regenerate_id()` after a successful password check — the pre-login session ID continues to be the post-login (authenticated) session ID. Low practical risk given the deployment's size and threat model, but a textbook hardening gap.
-- **The recurring auth-bypass workaround** (see top of this document) is itself the most acute current risk — it's a manual, easy-to-forget step, and there's no automated check or alert that would catch "the bypass has been live on production for N days." A [runbook.md](runbook.md) entry exists specifically to make checking for it a habit.
+- **The recurring auth-bypass workaround** (see top of this document — three occurrences so far) is the most acute current risk precisely because it's easy to forget and easy to repeat. A [runbook.md](runbook.md) entry exists specifically to make checking for it a habit whenever "the site looks like it's not enforcing login" comes up.

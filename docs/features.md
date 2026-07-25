@@ -2,7 +2,7 @@
 
 ## Резюме (Executive Summary)
 
-Системата има пет основни функционални области: (1) следене на тренировъчното натоварване за риск от травма, (2) следене на състезателните резултати и ранкинги, (3) автоматични здравни алерти при оплаквания или необичайни модели, (4) лабораторни данни от лактатни тестове с визуален анализ, и (5) седмичен обобщителен отчет. Всяка работи независимо — спирането на една не чупи останалите.
+Системата има пет основни функционални области: (1) следене на тренировъчното натоварване за риск от травма, (2) следене на състезателните резултати и ранкинги — както международни (World Triathlon), така и местни български състезания, (3) автоматични здравни алерти при оплаквания или необичайни модели, (4) лабораторни данни — клубни лактатни тестове с визуален анализ, плюс национални функционални тестове (НЦ) с отделно проследяване (протоколите не са сравними едни с други), и (5) седмичен обобщителен отчет. Всяка работи независимо — спирането на една не чупи останалите.
 
 ---
 
@@ -46,6 +46,8 @@ athletes:
 
 **Dashboard surface:** `athlete.php`'s "Резултати по година" (results by year) — year-filtered table, click-to-expand per-result split panel (Swim/T1/Bike/T2/Run times + computed positions), podium-colored position badges.
 
+**Local (Bulgarian) races** — a separate, parallel source for domestic competitions that never reach the World Triathlon API: a coach-maintained Google Sheet (three result tabs — triathlon/duathlon/aquathlon — merged into one `local_results` table with discipline-agnostic `leg1`/`leg2`/`leg3` columns, since what each leg *means* varies by sport). Synced weekly by `fetch_local_results.py`, same upsert-only/orphan-check pattern as the lab-data scripts (see [ADR 0003](adr/0003-google-sheets-lab-source.md)). Rendered on `athlete.php` as its own "Местни състезания" section — visually mirrors the World Triathlon results table (year filter, expandable split panels, podium badges) but is a fully independent block, since the page's year-filter JavaScript only ever binds to the first `.year-nav` it finds.
+
 ## 3. Health Alerts
 
 Two independent, activity-level checks, both deduplicated through the shared `seen_activities` ledger (`storage/db.py:filter_new_activities()`) so an activity is only ever scanned once regardless of how many times the 7-day fetch window re-covers it.
@@ -54,7 +56,7 @@ Two independent, activity-level checks, both deduplicated through the shared `se
 
 **Late-start detection** (`metrics/late_start.py`): flags any activity starting after 18:30 local time. Explicitly informational, not a health-risk signal — surfaces training-schedule patterns to the coach (e.g. "keeps training right before bed").
 
-## 4. Lab Data (Lactate Testing)
+## 4. Lab Data (Club Lactate Testing + National Functional Tests)
 
 **What it does:** syncs lactate step-test results from a coach-maintained Google Sheet, computes lactate thresholds (LT1/LT2) and a 5-zone training model, and renders both a summary table and a dedicated per-test analysis page.
 
@@ -66,6 +68,8 @@ Two independent, activity-level checks, both deduplicated through the shared `se
 - Dual-axis chart: power (x) vs. HR (left y, blue) and lactate (right y, red), Chart.js + `chartjs-plugin-annotation`.
 - 5 colored zone bands + dashed LT1 (green)/LT2 (red) threshold lines, computed server-side (`compute_zones()`), with "(est.)" labeling when a threshold wasn't manually entered and had to be linearly interpolated.
 - **Test comparison ("Фаза 2"):** up to 2 additional tests overlaid on the same chart (dashed/dotted, lighter tints — zones/LT lines stay tied to the primary test only, to avoid visual noise from multiple thresholds). A comparison table below shows LT1/LT2/FTP/W-kg/HR-at-LT2/max-lactate per selected test plus a Δ (delta) column between the oldest and newest test shown, color-coded (higher = improvement for LT1/LT2/FTP/W-kg; lower = improvement for HR-at-LT2; no color judgment for max lactate — direction isn't unambiguous). Selection state lives in the URL (`?test_id=X&compare=Y,Z`) so a specific comparison is bookmarkable/shareable.
+
+**National functional tests (НЦ)** — a second, deliberately *separate* lab-data stream for comprehensive physiological testing done at the national center (bike ergometer and treadmill protocols), synced weekly by `fetch_nat_tests.py` from its own Google Sheet into `nat_test_protocols` (protocol reference data) and `nat_functional_tests` (results). Kept apart from `lactate_tests` because the protocols genuinely aren't comparable: treadmill VO2max reads 5-10% higher than bike for the same athlete, and the national lab's bike protocol uses different step increments than the club's own. `includes/nat_tests.php:nat_tests_comparable()` is the single rule ("same protocol only") every chart is built through — `athlete.php`'s two trend charts (VO2max/kg, W_max/kg) render one series per protocol rather than one connected line, specifically so a protocol switch is never mistaken for a real physiological change. Tests are grouped by protocol in the summary table, each group showing the protocol's own parameters (device, step size, increment) pulled verbatim from `nat_test_protocols` so the description never drifts from what the lab recorded.
 
 ## 5. Reporting
 

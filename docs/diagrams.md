@@ -14,12 +14,16 @@ flowchart LR
         INT["Intervals.icu API<br/>(wellness + activities)"]
         WT["World Triathlon API<br/>(rankings + results)"]
         SHEET["Google Sheet<br/>(lactate tests, hand-entered)"]
+        SHEET2["Google Sheet<br/>(local BG race results)"]
+        SHEET3["Google Sheet<br/>(НЦ functional tests)"]
     end
 
     subgraph Fetch["Fetch / detect scripts (Python, cron)"]
         MAIN["main.py<br/>daily 20:00"]
         FWT["fetch_world_triathlon.py<br/>Mon 10/12/18:00"]
         FLD["fetch_lab_data.py<br/>Mon 08:00, venv py3.11"]
+        FLR["fetch_local_results.py<br/>Mon 08:00, venv py3.11"]
+        FNT["fetch_nat_tests.py<br/>Mon 08:05, venv py3.11"]
         WEEK["weekly_summary.py<br/>Sun 19:00"]
     end
 
@@ -38,10 +42,14 @@ flowchart LR
     INT --> MAIN
     WT --> FWT
     SHEET --> FLD
+    SHEET2 --> FLR
+    SHEET3 --> FNT
 
     MAIN -->|"daily_metrics, alert_events"| DB
     FWT -->|"world_triathlon,<br/>world_triathlon_results"| DB
     FLD -->|"lactate_tests"| DB
+    FLR -->|"local_events,<br/>local_results"| DB
+    FNT -->|"nat_test_protocols,<br/>nat_functional_tests"| DB
     WEEK -->|"reads daily_metrics,<br/>world_triathlon, alert_events"| DB
 
     MAIN -->|"deliver_pending_alerts()"| TG

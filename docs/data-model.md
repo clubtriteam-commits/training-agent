@@ -18,7 +18,7 @@ Three unrelated ID systems refer to the same person, and the codebase never unif
 |---|---|---|
 | Intervals.icu | `i000001` | `daily_metrics.athlete_id`, `alert_events.athlete_id`, `seen_activities.athlete_id` |
 | World Triathlon | `wt_100001` | `world_triathlon.athlete_id`, `world_triathlon_results.athlete_id` |
-| *(none — text only)* | `"Athlete_A"` | `lactate_tests.athlete_name` (no ID column at all) |
+| *(none — text only)* | `"Athlete_A"` | `lactate_tests.athlete_name`, `local_results.athlete_name`, `nat_functional_tests.athlete_name` (no ID column at all in any of the three) |
 
 `config/athletes.yaml` is the **only place** that maps all three together:
 
@@ -146,6 +146,72 @@ Pre-dates `alert_events` (see [ADR 0002](adr/0002-two-phase-detection-delivery.m
 **Written by:** `fetch_lab_data.py:sync_lactate_tests()`.
 **Read by:** `athlete.php` (test list + expandable step table), `api_lactate.php`.
 
+### `local_events` — Bulgarian local competitions (metadata)
+
+| Column | Type | Notes |
+|---|---|---|
+| `event_id` | TEXT PRIMARY KEY | A slug, not a numeric ID (e.g. `dp-sprint-plovdiv-2026`) — assigned in the Sheet by whoever enters the event, not by any external system. |
+| `event_date`, `name`, `city`, `organizer`, `source_url` | TEXT | `source_url` links to the timing company's published results page, shown as an outbound link on `athlete.php`. |
+| `synced_at` | TEXT (auto) | |
+
+**Update frequency:** weekly (Monday, alongside `local_results` — same script, same run).
+**Written by:** `fetch_local_results.py:sync_events()`.
+**Read by:** `athlete.php` (joined into the local-results table for event name/city/link).
+
+### `local_results` — Bulgarian local competition results (triathlon/duathlon/aquathlon)
+
+| Column | Type | Notes |
+|---|---|---|
+| `event_id` | TEXT | FK to `local_events.event_id` (no `FOREIGN KEY` constraint declared — SQLite wouldn't enforce it by default anyway) |
+| `sport` | TEXT | `triathlon` / `duathlon` / `aquathlon` |
+| `athlete_name` | TEXT | **Only identifier** — same limitation as `lactate_tests`, see above |
+| `distance`, `category`, `place`, `club` | TEXT | `place` is TEXT for the same DNF/DSQ reason as `world_triathlon_results.position` |
+| `leg1`, `t1`, `leg2`, `t2`, `leg3` | TEXT | **Generic, discipline-agnostic column names** — deliberately not `swim_split`/`bike_split`/`run_split` like `world_triathlon_results`, because what each leg *means* depends on `sport`: triathlon is swim/bike/run, duathlon is run/bike/run, aquathlon is run/swim/run (with `t1`/`t2` always `NULL` — no timed transitions in the source data). See `local_leg_labels()` in `athlete.php` for the sport → label mapping, and [ADR 0003](adr/0003-google-sheets-lab-source.md)'s sibling reasoning for why one generic table beats one table per discipline. |
+| `pos_leg1`, `pos_leg2`, `pos_leg3` | TEXT | Per-leg placement, as entered in the Sheet (not computed locally, unlike `world_triathlon_results`) |
+| `field_size` | INTEGER | Size of the category field the athlete competed in |
+| `synced_at` | TEXT (auto) | |
+
+**Unique constraint:** `(event_id, athlete_name)`.
+**Update frequency:** weekly (Monday), upsert-only — same orphan-row caveat as `lactate_tests` (a row deleted from the Sheet stays in SQLite until manually removed; `fetch_local_results.py` prints a warning listing orphans on every run but never deletes).
+**Written by:** `fetch_local_results.py:sync_results()`.
+**Read by:** `athlete.php` ("Местни състезания" section — year-filtered table with expandable per-leg splits, mirrors the `world_triathlon_results` UI but as an independently-scoped block since the page's existing `.year-nav`/`#results-table` JS selectors only ever bind to the first match on the page).
+
+### `nat_test_protocols` — reference data for national-lab test protocols
+
+| Column | Type | Notes |
+|---|---|---|
+| `protocol` | TEXT PRIMARY KEY | Slug: `club-bike`, `natlab-bike`, `natlab-treadmill` |
+| `device`, `start_value`, `increment`, `incline`, `metric`, `lab`, `note` | TEXT | Human-readable protocol description, shown verbatim under each test group on `athlete.php` (`nat_protocol_description()`) rather than reformatted, so it never drifts from what the lab actually recorded |
+| `step_minutes` | REAL | |
+| `synced_at` | TEXT (auto) | |
+
+**Note:** `club-bike` is a reference row only — describes the *club's own* lactate-test protocol (already stored in `lactate_tests`, see [ADR 0003](adr/0003-google-sheets-lab-source.md)) for comparison purposes. No `club-bike` rows ever appear in `nat_functional_tests`.
+**Update frequency:** weekly (Monday 08:05).
+**Written by:** `fetch_nat_tests.py:sync_protocols()`.
+**Read by:** `athlete.php` (protocol description blurb under each test group), `includes/nat_tests.php:nat_protocol_description()`.
+
+### `nat_functional_tests` — national-center lab step-test results
+
+| Column | Type | Notes |
+|---|---|---|
+| `athlete_name`, `test_date`, `protocol` | TEXT | Together form the unique key — see below |
+| `device`, `lab` | TEXT | |
+| `height_cm`, `arm_span_cm`, `weight_kg`, `lean_mass_kg`, `fat_pct`, `fat_kg`, `muscle_pct`, `muscle_kg` | REAL | Body composition at test time |
+| `duration_min` | REAL | |
+| `w_max`, `w_max_kg` | REAL, nullable | Bike protocols only — `NULL` for treadmill tests |
+| `s_max_kmh` | REAL, nullable | Treadmill protocol only — `NULL` for bike tests |
+| `vo2max`, `vo2max_kg`, `hr_max` | REAL/INT | Present for both protocol types — **not directly comparable across protocols**, see below |
+| `epz_from`, `epz_to` | INTEGER, nullable | Effort/pace zone range, shown as `{from}–{to}` on `athlete.php` |
+| `la_2`, `la_6`, `la_15`, `hr_2`, `hr_6` | REAL/INT, nullable | Lactate (mmol/L) and HR at fixed post-test recovery minutes. Legitimately absent for some tests (a 2022 test in production has no lactate values at all) — `NULL`, not `0`. |
+| `synced_at` | TEXT (auto) | |
+
+**Unique constraint:** `(athlete_name, test_date, protocol)` — a **triple**, not the `(athlete_name, test_date)` pair used by `lactate_tests`. This matters: an athlete can have both a bike and a treadmill test on the same day (the whole squad did, in one April 2026 test session) — a two-column key would silently collide and drop one of the two rows on upsert.
+**Comparability rule:** `vo2max_kg` in particular looks like one continuous metric but isn't — treadmill VO2max typically reads 5-10% higher than bike for the *same* athlete (higher metabolic cost from the treadmill's incline), and the club's own bike protocol uses different step sizes than the national lab's. `includes/nat_tests.php:nat_tests_comparable($protocol_a, $protocol_b)` is the single source of truth for "may these two values be compared" (true only when `protocol_a === protocol_b`) — every chart on `athlete.php` renders one series per protocol rather than one continuous line, specifically so this never gets silently violated by a naive "just plot vo2max_kg by date" implementation. A real production data point (`vo2max_kg` 70.94 on a 2022 treadmill test, 68.94 on a 2026 bike test for the same athlete) looks like a decline if plotted as one series; it is not one, once protocol is accounted for.
+**Data quality note:** the source Sheet uses comma-decimal formatting (Bulgarian locale, e.g. `"48,3"`). `gspread`'s default `get_all_records()` mangles this into `483` instead of `48.3` — `fetch_nat_tests.py` reads with `numericise_ignore=['all']` and parses the comma itself. Any future script reading this same Sheet (or one with the same locale settings) needs to do the same, or every weight/VO2max/lactate value will silently come out 10-100x too large.
+**Update frequency:** weekly (Monday 08:05 — 5 minutes after `fetch_lab_data.py`'s 08:00 slot, deliberately offset since neither script takes a lock and a same-instant SQLite write from both is possible in principle).
+**Written by:** `fetch_nat_tests.py:sync_tests()`.
+**Read by:** `athlete.php` ("Национални функционални тестове" section — tables grouped by protocol, two charts: VO2max/kg and W_max/kg, one series per protocol).
+
 ## `api_lactate.php` — the one real API in this codebase
 
 Everything else in the PHP layer queries SQLite directly and renders server-side HTML. `api_lactate.php` is the exception — a session-gated JSON endpoint, added to support the client-rendered lactate analysis chart (`lactate_analysis.php`).
@@ -181,4 +247,4 @@ Returns all tests for one athlete (by `athlete_name` — the only key that exist
 {"tests": [{"test_id": 4, "test_date": "2025-10-31", "ftp": null, "w_kg": null}, "..."]}
 ```
 
-**Note on float precision:** the endpoint explicitly sets `ini_set('serialize_precision', -1)` before encoding — production PHP 8.0's `php.ini` has `serialize_precision=100`, which without this override serializes every float with its full IEEE754 tail (e.g. `3.899999999999999911182...` instead of `3.9`). See the commit `cee6413` fix and [scaling.md](scaling.md) for other PHP-version-dependent gotchas.
+**Note on float precision:** the endpoint explicitly sets `ini_set('serialize_precision', -1)` before encoding — production PHP 8.0's `php.ini` has `serialize_precision=100`, which without this override serializes every float with its full IEEE754 tail (e.g. `3.899999999999999911182...` instead of `3.9`). See the commit `cee6413` fix and [scaling.md](scaling.md) for other PHP-version-dependent gotchas. `athlete.php` needed the identical fix (commit `6346d01`) for its own inline `json_encode()` calls (`$chart_data`, `NAT_DATA`) — **any new PHP file that `json_encode()`s a float for JS consumption needs this same `ini_set()` call near the top**, it is not a property of `api_lactate.php` alone.

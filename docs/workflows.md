@@ -58,6 +58,23 @@ cd /home/trailser/training-agent
 ./venv/bin/python fetch_lab_data.py
 ```
 
+## Local race results sync: `fetch_local_results.py`
+
+**Current cron schedule: Monday 08:00**, same slot as `fetch_lab_data.py` — a second, independent Google Sheets sync (three result tabs: triathlon/duathlon/aquathlon), venv Python 3.11, upsert-only with an orphan-row warning printed on every run. Manual run:
+```bash
+cd /home/trailser/training-agent
+./venv/bin/python fetch_local_results.py
+```
+
+## National functional tests sync: `fetch_nat_tests.py`
+
+**Current cron schedule: Monday 08:05** — deliberately offset 5 minutes from `fetch_lab_data.py`'s 08:00 slot, since neither script takes a database lock and a same-instant SQLite write from both is possible in principle (see [ADR 0007](adr/0007-limitations.md)). Reads two tabs (`Протоколи`, `Функционални тестове`) via venv Python 3.11. Manual run:
+```bash
+cd /home/trailser/training-agent
+./venv/bin/python fetch_nat_tests.py
+```
+**Locale gotcha specific to this Sheet:** it uses comma-decimal formatting (e.g. `"48,3"`), which `gspread`'s default record-fetching mangles into `483` instead of `48.3` unless read with `numericise_ignore=['all']` and parsed manually — see [data-model.md](data-model.md#nat_functional_tests--national-center-lab-step-test-results) for the full story. Any new script reading a comma-decimal Sheet needs the same treatment.
+
 ## Deploy procedure — two independent paths, easy to conflate
 
 This is the single most important operational fact in this document: **there is no one "deploy."** Two completely separate mechanisms update two completely separate things.
