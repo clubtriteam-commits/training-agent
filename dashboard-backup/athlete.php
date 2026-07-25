@@ -1,5 +1,12 @@
 <?php
 header('Cache-Control: no-store, no-cache, must-revalidate');
+
+// Production (PHP 8.0) има serialize_precision=100 в php.ini — json_encode()
+// печата всеки float с пълната IEEE754 опашка (напр. 71.07 като
+// 71.0699999999999...) вместо чисто число. Същият фикс като api_lactate.php;
+// тук важи за $chart_data/NAT_DATA по-долу, вкъдено в <script> инлайн.
+ini_set('serialize_precision', -1);
+
 require_once 'includes/auth.php';
 require_once 'includes/db.php';
 require_once 'includes/metrics_glossary.php';
