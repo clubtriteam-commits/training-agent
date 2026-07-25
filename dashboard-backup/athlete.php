@@ -102,6 +102,31 @@ try {
     $race_results = [];
 }
 
+// Местни състезания (fetch_local_results.py, от Google Sheet; join по
+// athlete_name по същата причина като world_triathlon/lactate_tests по-долу —
+// Sheet-ът не познава нито intervals, нито World Triathlon ID).
+// Таблицата може още да не съществува при стара база — прескачаме тихо.
+$local_results = [];
+try {
+    $stmt = $pdo->prepare("
+        SELECT lr.*, le.event_date, le.name AS event_name, le.city, le.organizer, le.source_url
+        FROM local_results lr
+        JOIN local_events le ON lr.event_id = le.event_id
+        WHERE lr.athlete_name = ?
+        ORDER BY le.event_date DESC
+    ");
+    $stmt->execute([$athlete_name]);
+    $local_results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $local_results = [];
+}
+
+$local_result_years = array_values(array_unique(array_map(
+    fn($r) => substr($r['event_date'], 0, 4),
+    $local_results
+)));
+$local_default_year = $local_result_years[0] ?? null;
+
 // Лактатни тестове (fetch_lab_data.py, от Google Sheet; join по athlete_name
 // по същата причина като world_triathlon по-горе — Sheet-ът не познава intervals ID).
 // Таблицата може още да не съществува при стара база — прескачаме тихо.
@@ -138,6 +163,24 @@ function status_badge($status) {
 
 function fmt($value, $decimals = 1) {
     return $value === null ? '—' : number_format((float)$value, $decimals);
+}
+
+// Етикети на етапите по дисциплина — огледало на LEG_MAP в fetch_local_results.py.
+// Трите резултатни таба се сливат в generic leg1/leg2/leg3 в базата именно за да
+// не иска нова таблица/нов PHP код всеки път при нова дисциплина — тук е
+// единственото място, което превежда позицията обратно в четимо име на етапа.
+function local_leg_labels($sport) {
+    $map = [
+        'triathlon' => ['leg1' => 'Плуване',  'leg2' => 'Колело', 'leg3' => 'Бягане'],
+        'duathlon'  => ['leg1' => 'Бягане 1',  'leg2' => 'Колело', 'leg3' => 'Бягане 2'],
+        'aquathlon' => ['leg1' => 'Бягане 1',  'leg2' => 'Плуване', 'leg3' => 'Бягане 2'],
+    ];
+    return $map[$sport] ?? ['leg1' => 'Етап 1', 'leg2' => 'Етап 2', 'leg3' => 'Етап 3'];
+}
+
+function local_sport_label($sport) {
+    $labels = ['triathlon' => 'Триатлон', 'duathlon' => 'Дуатлон', 'aquathlon' => 'Акватлон'];
+    return $labels[$sport] ?? $sport;
 }
 
 // LT1/LT2 за overview таблицата: ръчна стойност от Sheet-а както си е,
@@ -548,6 +591,103 @@ $alert_type_labels = [
     </div>
 
     <div class="table-card" style="margin-top:20px;">
+        <h2>Местни състезания</h2>
+        <?php if ($local_results): ?>
+        <nav class="year-nav local-year-nav" aria-label="Филтър по година — местни състезания">
+            <?php foreach ($local_result_years as $year): ?>
+                <button type="button" data-year="<?= htmlspecialchars($year) ?>"
+                        class="<?= $year === $local_default_year ? 'active' : '' ?>"><?= htmlspecialchars($year) ?></button>
+            <?php endforeach; ?>
+        </nav>
+        <table id="local-results-table">
+            <thead>
+                <tr><th>Дата</th><th>Състезание</th><th>Дисциплина</th><th>Позиция</th><th>Време</th></tr>
+            </thead>
+            <tbody>
+                <?php foreach ($local_results as $r):
+                    $row_year = substr($r['event_date'], 0, 4);
+                    $legs = local_leg_labels($r['sport']);
+                    $splits = [
+                        $legs['leg1'] => ['time' => $r['leg1'], 'pos' => $r['pos_leg1']],
+                        'T1'          => ['time' => $r['t1'],   'pos' => null],
+                        $legs['leg2'] => ['time' => $r['leg2'], 'pos' => $r['pos_leg2']],
+                        'T2'          => ['time' => $r['t2'],   'pos' => null],
+                        $legs['leg3'] => ['time' => $r['leg3'], 'pos' => $r['pos_leg3']],
+                    ];
+                    // Акватлонът няма отделни транзиции (t1/t2 винаги NULL от sync-а) —
+                    // без тях, вместо два безсмислени "—" етапа в грида.
+                    if ($r['sport'] === 'aquathlon') {
+                        unset($splits['T1'], $splits['T2']);
+                    }
+                    $has_splits = count(array_filter($splits, fn($s) => $s['time'] !== null && $s['time'] !== '')) > 0;
+
+                    // Същата podium-badge логика като WT резултатите по-горе.
+                    $pos = $r['place'];
+                    $pos_class = 'pos-badge';
+                    if ($pos !== null && $pos !== '' && is_numeric($pos)) {
+                        $p = (int)$pos;
+                        if ($p === 1) $pos_class .= ' pos-gold';
+                        elseif ($p === 2) $pos_class .= ' pos-silver';
+                        elseif ($p === 3) $pos_class .= ' pos-bronze';
+                    } elseif ($pos !== null && $pos !== '') {
+                        $pos_class .= ' pos-dnx';
+                    }
+                ?>
+                <tr class="result-row local-result-row" data-year="<?= htmlspecialchars($row_year) ?>"
+                    tabindex="0" role="button" aria-expanded="false"
+                    <?= $row_year !== $local_default_year ? 'style="display:none;"' : '' ?>>
+                    <td class="event-date"><?= htmlspecialchars($r['event_date']) ?></td>
+                    <td class="msg event-name"><?= htmlspecialchars($r['event_name']) ?><?= !empty($r['city']) ? ' (' . htmlspecialchars($r['city']) . ')' : '' ?></td>
+                    <td><?= htmlspecialchars(local_sport_label($r['sport'])) ?></td>
+                    <td><?= $pos !== null && $pos !== ''
+                        ? '<span class="' . $pos_class . '">' . htmlspecialchars($pos) . '</span>'
+                        : '—' ?></td>
+                    <td class="total-time"><?= $r['total_time'] !== null && $r['total_time'] !== '' ? htmlspecialchars($r['total_time']) : '—' ?></td>
+                </tr>
+                <tr class="result-detail local-result-detail" data-year="<?= htmlspecialchars($row_year) ?>" style="display:none;">
+                    <td colspan="5">
+                        <div class="split-panel">
+                            <p style="margin:0 0 10px;color:var(--ink-2);font-size:13px;">
+                                Категория: <?= htmlspecialchars($r['category'] ?? '—') ?> ·
+                                Класиране: <?= $pos !== null && $pos !== '' ? htmlspecialchars($pos) : '—' ?> от <?= $r['field_size'] !== null ? (int)$r['field_size'] : '—' ?> ·
+                                Клуб: <?= htmlspecialchars($r['club'] ?? '—') ?>
+                            </p>
+                            <?php if ($has_splits): ?>
+                            <div class="splits-grid">
+                                <?php foreach ($splits as $label => $s):
+                                    $has_time = $s['time'] !== null && $s['time'] !== '';
+                                ?>
+                                <div class="split-cell">
+                                    <div class="split-label"><?= htmlspecialchars($label) ?></div>
+                                    <div class="split-time<?= $has_time ? '' : ' split-time--empty' ?>">
+                                        <?= $has_time ? htmlspecialchars($s['time']) : '—' ?>
+                                    </div>
+                                    <?php if ($has_time && $s['pos'] !== null && $s['pos'] !== ''): ?>
+                                    <div class="split-pos">(<?= htmlspecialchars($s['pos']) ?>)</div>
+                                    <?php endif; ?>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <?php else: ?>
+                                <div class="no-splits">Няма детайлни данни</div>
+                            <?php endif; ?>
+                            <?php if (!empty($r['source_url'])): ?>
+                            <p style="margin:10px 0 0;font-size:12px;">
+                                <a href="<?= htmlspecialchars($r['source_url']) ?>" target="_blank" rel="noopener">Официални резултати ↗</a>
+                            </p>
+                            <?php endif; ?>
+                        </div>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php else: ?>
+            <p class="empty">Няма резултати от местни състезания</p>
+        <?php endif; ?>
+    </div>
+
+    <div class="table-card" style="margin-top:20px;">
         <h2>Лактатни тестове</h2>
         <?php if ($lactate_tests): ?>
         <table id="lactate-table">
@@ -819,6 +959,51 @@ $alert_type_labels = [
         function toggleRow(row) {
             const detail = row.nextElementSibling;
             if (!detail || !detail.classList.contains('result-detail')) return;
+            const willOpen = detail.style.display === 'none';
+            detail.style.display = willOpen ? '' : 'none';
+            row.classList.toggle('open', willOpen);
+            row.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        }
+
+        mainRows.forEach(function (row) {
+            row.addEventListener('click', function () { toggleRow(row); });
+            row.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault();
+                    toggleRow(row);
+                }
+            });
+        });
+    }());
+
+    // Местни състезания: същата логика като "Резултати по година" по-горе,
+    // но скопирана отделно (.local-year-nav / #local-results-table), защото
+    // document.querySelector('.year-nav') по-горе взима само ПЪРВИЯ nav на
+    // страницата — с два .year-nav елемента вторият остава без поведение,
+    // ако не се скопира изрично.
+    (function () {
+        const nav = document.querySelector('.local-year-nav');
+        if (!nav) return;
+        const buttons = nav.querySelectorAll('button');
+        const mainRows = document.querySelectorAll('#local-results-table tbody tr.local-result-row');
+        const detailRows = document.querySelectorAll('#local-results-table tbody tr.local-result-detail');
+
+        nav.addEventListener('click', function (ev) {
+            const btn = ev.target.closest('button');
+            if (!btn) return;
+            const year = btn.dataset.year;
+            buttons.forEach(b => b.classList.toggle('active', b === btn));
+            mainRows.forEach(r => {
+                r.style.display = r.dataset.year === year ? '' : 'none';
+                r.classList.remove('open');
+                r.setAttribute('aria-expanded', 'false');
+            });
+            detailRows.forEach(r => { r.style.display = 'none'; });
+        });
+
+        function toggleRow(row) {
+            const detail = row.nextElementSibling;
+            if (!detail || !detail.classList.contains('local-result-detail')) return;
             const willOpen = detail.style.display === 'none';
             detail.style.display = willOpen ? '' : 'none';
             row.classList.toggle('open', willOpen);
