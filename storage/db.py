@@ -161,6 +161,49 @@ def init_db():
         )
     ''')
 
+    # Национални функционални тестове (НЦ) — отделно от lactate_tests, защото
+    # протоколите (вело срещу тредбанд, различни стъпки от клубния протокол)
+    # не са пряко сравними; виж includes/nat_tests.php:nat_tests_comparable().
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS nat_test_protocols (
+            protocol      TEXT PRIMARY KEY,
+            device        TEXT,
+            start_value   TEXT,
+            increment     TEXT,
+            step_minutes  REAL,
+            incline       TEXT,
+            metric        TEXT,
+            lab           TEXT,
+            note          TEXT,
+            synced_at     TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # UNIQUE е тройка (athlete_name, test_date, protocol), не двойка — вело и
+    # тредбанд може да са в един и същи ден (случи се за целия отбор през
+    # април 2026), затова само (athlete_name, test_date) би загубил единия ред.
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS nat_functional_tests (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            athlete_name  TEXT NOT NULL,
+            test_date     TEXT NOT NULL,
+            protocol      TEXT NOT NULL,
+            device        TEXT,
+            lab           TEXT,
+            height_cm REAL, arm_span_cm REAL, weight_kg REAL, lean_mass_kg REAL,
+            fat_pct REAL, fat_kg REAL, muscle_pct REAL, muscle_kg REAL,
+            duration_min  REAL,
+            w_max REAL, w_max_kg REAL,
+            s_max_kmh REAL,
+            vo2max REAL, vo2max_kg REAL, hr_max INTEGER,
+            epz_from INTEGER, epz_to INTEGER,
+            la_2 REAL, la_6 REAL, la_15 REAL, hr_2 INTEGER, hr_6 INTEGER,
+            synced_at     TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(athlete_name, test_date, protocol)
+        )
+    ''')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_nat_tests_name ON nat_functional_tests(athlete_name)')
+
     cur.execute(SEEN_ACTIVITIES_SCHEMA)
 
     # Миграция за бази, създадени преди сплит колоните: CREATE IF NOT EXISTS

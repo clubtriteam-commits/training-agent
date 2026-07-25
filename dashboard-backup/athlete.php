@@ -4,6 +4,7 @@ require_once 'includes/auth.php';
 require_once 'includes/db.php';
 require_once 'includes/metrics_glossary.php';
 require_once 'includes/lactate_zones.php';
+require_once 'includes/nat_tests.php';
 require_login();
 
 $pdo = get_db_connection();
@@ -141,6 +142,54 @@ try {
     $lactate_tests = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $lactate_tests = [];
+}
+
+// Национални функционални тестове (НЦ) — fetch_nat_tests.py, от Google Sheet;
+// join по athlete_name по същата причина като lactate_tests по-горе.
+// Отделно от lactate_tests нарочно — протоколите не са сравними
+// (nat_tests_comparable() в includes/nat_tests.php).
+$nat_tests = [];
+$nat_protocols = [];
+try {
+    $stmt = $pdo->prepare("
+        SELECT * FROM nat_functional_tests
+        WHERE athlete_name = ?
+        ORDER BY test_date DESC
+    ");
+    $stmt->execute([$athlete_name]);
+    $nat_tests = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $pdo->query("SELECT * FROM nat_test_protocols");
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
+        $nat_protocols[$p['protocol']] = $p;
+    }
+} catch (PDOException $e) {
+    $nat_tests = [];
+    $nat_protocols = [];
+}
+$nat_tests_by_protocol = nat_tests_group_by_protocol($nat_tests);
+
+// Общ, хронологично сортиран списък дати за двете графики (VO2max/kg,
+// W_max/kg) — всеки протокол получава собствена серия със null там, където
+// няма тест на тази дата, по същия принцип като HRV/сън по-горе в чарта.
+$nat_chart_dates = array_values(array_unique(array_map(fn($t) => $t['test_date'], $nat_tests)));
+sort($nat_chart_dates);
+$nat_chart_series = [];
+foreach ($nat_tests_by_protocol as $protocol => $tests) {
+    $by_date = [];
+    foreach ($tests as $t) {
+        $by_date[$t['test_date']] = $t;
+    }
+    $vo2 = []; $wmax = [];
+    foreach ($nat_chart_dates as $d) {
+        $vo2[]  = isset($by_date[$d]) && $by_date[$d]['vo2max_kg'] !== null ? (float)$by_date[$d]['vo2max_kg'] : null;
+        $wmax[] = isset($by_date[$d]) && $by_date[$d]['w_max_kg'] !== null ? (float)$by_date[$d]['w_max_kg'] : null;
+    }
+    $nat_chart_series[$protocol] = [
+        'label' => $nat_protocols[$protocol]['device'] ?? $protocol,
+        'vo2max_kg' => $vo2,
+        'w_max_kg' => $wmax,
+    ];
 }
 
 // Наличните години (за бутоните), най-новата първа = избрана по подразбиране
@@ -375,7 +424,7 @@ $alert_type_labels = [
         .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; margin-bottom: 20px; }
         .chart-card { background: var(--surface); border-radius: 8px; padding: 16px 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
         .chart-card h2 { margin: 0 0 4px; font-size: 16px; color: var(--ink); }
-        .chart-card .hint { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+        .chart-card .hint, .hint { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
         .chart-wrap { position: relative; height: 240px; }
         .tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; }
         .table-card { background: var(--surface); border-radius: 8px; padding: 16px 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); overflow-x: auto; }
@@ -808,10 +857,87 @@ $alert_type_labels = [
         <?php endif; ?>
     </div>
 
+    <div class="table-card" style="margin-top:20px;">
+        <h2>Национални функционални тестове (НЦ)</h2>
+        <?php if ($nat_tests): ?>
+        <p class="hint" style="margin:0 0 16px;">
+            Отделно от клубните лактатни тестове по-горе — различен протокол, стойностите не са пряко сравними между вело и тредбанд (виж бележките под всяка таблица).
+        </p>
+
+        <div class="charts">
+            <div class="chart-card">
+                <h2>VO2max/kg</h2>
+                <p class="hint">Отделна серия за всеки протокол — не се свързват с права линия</p>
+                <div class="chart-wrap"><canvas id="chartNatVo2max"></canvas></div>
+            </div>
+            <div class="chart-card">
+                <h2>W_max/kg</h2>
+                <p class="hint">Само вело протоколи (тредбандът няма W_max)</p>
+                <div class="chart-wrap"><canvas id="chartNatWmax"></canvas></div>
+            </div>
+        </div>
+
+        <?php foreach ($nat_tests_by_protocol as $protocol => $tests):
+            $protocol_row = $nat_protocols[$protocol] ?? null;
+            $device_label = $protocol_row['device'] ?? $protocol;
+            $description = nat_protocol_description($protocol_row);
+        ?>
+        <h3 style="margin:24px 0 4px;font-size:15px;"><?= htmlspecialchars($device_label) ?></h3>
+        <?php if ($description): ?>
+        <p class="hint" style="margin:0 0 10px;"><?= htmlspecialchars($description) ?></p>
+        <?php endif; ?>
+        <table class="nat-tests-table">
+            <thead>
+                <tr><th>Дата</th><th><?= ($protocol_row['metric'] ?? '') === 'W' ? 'W_max' : 'S_max' ?></th><th>VO2max/kg</th><th>HR_max</th><th>ЕПЗ</th></tr>
+            </thead>
+            <tbody>
+                <?php foreach ($tests as $t): ?>
+                <tr class="result-row nat-test-row" tabindex="0" role="button" aria-expanded="false">
+                    <td class="event-date"><?= htmlspecialchars($t['test_date']) ?></td>
+                    <td><?= nat_primary_metric($t, $protocol_row) ?></td>
+                    <td><?= fmt($t['vo2max_kg'], 2) ?></td>
+                    <td><?= $t['hr_max'] !== null ? (int)$t['hr_max'] : '—' ?></td>
+                    <td><?= $t['epz_from'] !== null && $t['epz_to'] !== null ? (int)$t['epz_from'] . '–' . (int)$t['epz_to'] : '—' ?></td>
+                </tr>
+                <tr class="result-detail nat-test-detail" style="display:none;">
+                    <td colspan="5">
+                        <div class="split-panel">
+                            <p style="margin:0 0 10px;color:var(--ink-2);font-size:13px;">
+                                Ръст: <?= fmt($t['height_cm'], 0) ?> см ·
+                                Разтег: <?= fmt($t['arm_span_cm'], 0) ?> см ·
+                                Тегло: <?= fmt($t['weight_kg'], 1) ?> кг ·
+                                АТМ: <?= fmt($t['lean_mass_kg'], 1) ?> кг
+                            </p>
+                            <p style="margin:0 0 10px;color:var(--ink-2);font-size:13px;">
+                                Мазнини: <?= fmt($t['fat_pct'], 1) ?>% (<?= fmt($t['fat_kg'], 1) ?> кг) ·
+                                Мускули: <?= fmt($t['muscle_pct'], 1) ?>% (<?= fmt($t['muscle_kg'], 1) ?> кг) ·
+                                Продължителност: <?= fmt($t['duration_min'], 1) ?> мин
+                            </p>
+                            <p style="margin:0;color:var(--ink-2);font-size:13px;">
+                                Лактат/пулс: La2 <?= fmt($t['la_2'], 1) ?> / HR2 <?= $t['hr_2'] !== null ? (int)$t['hr_2'] : '—' ?> ·
+                                La6 <?= fmt($t['la_6'], 1) ?> / HR6 <?= $t['hr_6'] !== null ? (int)$t['hr_6'] : '—' ?> ·
+                                La15 <?= fmt($t['la_15'], 1) ?>
+                            </p>
+                        </div>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php endforeach; ?>
+        <?php else: ?>
+            <p class="empty">Няма национални функционални тестове</p>
+        <?php endif; ?>
+    </div>
+
     <?php render_metrics_legend(); ?>
 
     <script>
     const DATA = <?= json_encode($chart_data, JSON_UNESCAPED_UNICODE) ?>;
+    const NAT_DATA = <?= json_encode([
+        'dates' => $nat_chart_dates,
+        'series' => array_values($nat_chart_series),
+    ], JSON_UNESCAPED_UNICODE) ?>;
 
     const INK2 = '#52514e', MUTED = '#898781', GRID = '#e1e0d9';
     const BLUE = '#2a78d6', AQUA = '#1baf7a';
@@ -931,6 +1057,53 @@ $alert_type_labels = [
         data: { labels: DATA.rankLabels, datasets: [series('Regional Ranking', DATA.regional, BLUE)] },
         options: baseOptions({ reverse: true })
     });
+
+    // НЦ функционални тестове: отделна серия за всеки протокол — nat_tests_comparable()
+    // (includes/nat_tests.php) е причината да НЕ свързваме различни протоколи с една
+    // линия: тредбанд/вело дават различен VO2max за същия атлет по физиологични причини.
+    if (NAT_DATA.dates && NAT_DATA.dates.length) {
+        const NAT_COLORS = [BLUE, AQUA, '#c62828', '#f57c00'];
+        const vo2Datasets = NAT_DATA.series.map((s, i) => series(s.label, s.vo2max_kg, NAT_COLORS[i % NAT_COLORS.length]));
+        const wmaxDatasets = NAT_DATA.series
+            .filter(s => s.w_max_kg.some(v => v !== null))
+            .map((s, i) => series(s.label, s.w_max_kg, NAT_COLORS[i % NAT_COLORS.length]));
+
+        new Chart(document.getElementById('chartNatVo2max'), {
+            type: 'line',
+            data: { labels: NAT_DATA.dates, datasets: vo2Datasets },
+            options: baseOptions({ legend: true })
+        });
+
+        if (wmaxDatasets.length) {
+            new Chart(document.getElementById('chartNatWmax'), {
+                type: 'line',
+                data: { labels: NAT_DATA.dates, datasets: wmaxDatasets },
+                options: baseOptions({ legend: true })
+            });
+        }
+    }
+
+    // НЦ функционални тестове: просто expand/collapse, без year filter
+    // (тестовете са малко на брой годишно — не си заслужава допълнителна навигация).
+    (function () {
+        function toggleRow(row) {
+            const detail = row.nextElementSibling;
+            if (!detail || !detail.classList.contains('nat-test-detail')) return;
+            const willOpen = detail.style.display === 'none';
+            detail.style.display = willOpen ? '' : 'none';
+            row.classList.toggle('open', willOpen);
+            row.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        }
+        document.querySelectorAll('.nat-tests-table tbody tr.nat-test-row').forEach(function (row) {
+            row.addEventListener('click', function () { toggleRow(row); });
+            row.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault();
+                    toggleRow(row);
+                }
+            });
+        });
+    }());
 
     // "Резултати по година": филтър по година + разгъващи се сплитове.
     // Всеки резултат е ДВОЙКА редове — .result-row (видим при съвпадаща
