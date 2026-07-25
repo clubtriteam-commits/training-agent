@@ -60,7 +60,7 @@ cd /home/trailser/training-agent
 
 ## Local race results sync: `fetch_local_results.py`
 
-**Current cron schedule: Monday 08:00**, same slot as `fetch_lab_data.py` — a second, independent Google Sheets sync (three result tabs: triathlon/duathlon/aquathlon), venv Python 3.11, upsert-only with an orphan-row warning printed on every run. Manual run:
+**Current cron schedule: Monday 08:10** — offset from `fetch_lab_data.py` (08:00) and `fetch_nat_tests.py` (08:05) for the same lock-free-SQLite-write reason (see [ADR 0007](adr/0007-limitations.md)); this entry was in fact missing from the crontab entirely until caught by a post-deploy audit, not present from day one the way the other two were. A second, independent Google Sheets sync (three result tabs: triathlon/duathlon/aquathlon), venv Python 3.11, upsert-only with an orphan-row warning printed on every run. Manual run:
 ```bash
 cd /home/trailser/training-agent
 ./venv/bin/python fetch_local_results.py
