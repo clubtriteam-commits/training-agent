@@ -112,3 +112,22 @@ git pull
 ```
 
 **Prevention:** there is currently no automation for this — no post-push hook, no CI step. After any commit touching a `.py` file, `git pull` on the server is a manual, easy-to-forget step, distinct from (and in addition to) running `deploy.ps1` for PHP changes. Treat "did I pull the server" as a standing checklist item alongside "did I deploy," not a step deploy.ps1 already covers.
+
+## Data update doesn't show up despite a confirmed-successful sync/deploy
+
+**Symptoms:** a new feature or data sync is deployed and verified working (code deployed, DB confirmed to have the right rows via direct SQLite/SSH inspection), but the live page still shows the old/empty state — sometimes for minutes, observed to persist across multiple repeated page loads.
+
+**How this actually happened:** production sits behind an edge cache (`sh-cache`, part of the hosting platform) that **ignores the application's own `Cache-Control: no-store, no-cache, must-revalidate` header** — confirmed via a real incident adding local race results to `athlete.php`: the PHP code was correct, the data was correctly synced (verified by querying `data/agent.db` directly over SSH, and by a temporary diagnostic script running the exact same query through PDO), yet the live page kept rendering "no results" while a version of the same URL with an extra cache-busting query parameter (`?...&cb=<timestamp>`) immediately showed the correct data.
+
+**Diagnosis:**
+1. Rule out an actual code/data bug first — reproduce the query directly over SSH (`sqlite3`/Python) against `data/agent.db`, and/or drop a temporary diagnostic `.php` file (see the "dashboard 500" section above for the pattern) that runs the exact same `PDO` query and prints the result, bypassing whatever page-level logic might be swallowing an exception.
+2. If the direct query/diagnostic script shows correct data but the real page doesn't, check the response headers for the real page:
+   ```bash
+   curl -s -A "Mozilla/5.0 ..." -b <cookiejar> -D - <url> -o /dev/null | grep -i x-sh-cache
+   ```
+   `X-SH-Cache-Status: HIT` confirms a cached response is being served.
+3. Confirm by appending a throwaway query parameter (`&cb=$(date +%s)`) — a fresh, uncached render should show the correct current data immediately.
+
+**Fix:** no application-side fix currently identified — no known purge mechanism has been found from outside a WHM/cPanel panel (not available in this project's access). In practice, the cache appears to eventually expire on its own; waiting is the current workaround. **Do not conclude a deploy or data sync failed based on the live page alone** — always verify against the database directly (or a diagnostic script) before assuming the code is wrong, per this incident.
+
+**Prevention:** treat this as a standing caveat, not something to re-diagnose from scratch each time. Any "I deployed/synced but the site doesn't show it" report should check for `X-SH-Cache-Status: HIT` *before* assuming the deploy failed. See [ADR 0007](adr/0007-limitations.md).
