@@ -210,7 +210,7 @@ Pre-dates `alert_events` (see [ADR 0002](adr/0002-two-phase-detection-delivery.m
 **Data quality note:** the source Sheet uses comma-decimal formatting (Bulgarian locale, e.g. `"48,3"`). `gspread`'s default `get_all_records()` mangles this into `483` instead of `48.3` — `fetch_nat_tests.py` reads with `numericise_ignore=['all']` and parses the comma itself. Any future script reading this same Sheet (or one with the same locale settings) needs to do the same, or every weight/VO2max/lactate value will silently come out 10-100x too large.
 **Update frequency:** weekly (Monday 08:05 — 5 minutes after `fetch_lab_data.py`'s 08:00 slot, deliberately offset since neither script takes a lock and a same-instant SQLite write from both is possible in principle).
 **Written by:** `fetch_nat_tests.py:sync_tests()`.
-**Read by:** `athlete.php` ("Национални функционални тестове" section — tables grouped by protocol, two charts: VO2max/kg and W_max/kg, one series per protocol).
+**Read by:** `athlete.php` ("Национални функционални тестове" section, redesigned 2026-07-26 — one block per protocol: a standalone reference card for a protocol with only 1 test, or a trend mini-chart + grouped comparison table with a Δ-общо delta column + a personal-best-normalized radar overlay for 2+ tests; see [features.md](features.md) and [glossary.md](glossary.md#comparison-table-and-radar-rules-2026-07-26-redesign)).
 
 ## `api_lactate.php` — the one real API in this codebase
 

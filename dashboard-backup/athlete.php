@@ -4,7 +4,7 @@ header('Cache-Control: no-store, no-cache, must-revalidate');
 // Production (PHP 8.0) има serialize_precision=100 в php.ini — json_encode()
 // печата всеки float с пълната IEEE754 опашка (напр. 71.07 като
 // 71.0699999999999...) вместо чисто число. Същият фикс като api_lactate.php;
-// тук важи за $chart_data/NAT_DATA по-долу, вкъдено в <script> инлайн.
+// тук важи за $chart_data/NAT_CHARTS по-долу, вкъдено в <script> инлайн.
 ini_set('serialize_precision', -1);
 
 require_once 'includes/auth.php';
@@ -176,27 +176,15 @@ try {
 }
 $nat_tests_by_protocol = nat_tests_group_by_protocol($nat_tests);
 
-// Общ, хронологично сортиран списък дати за двете графики (VO2max/kg,
-// W_max/kg) — всеки протокол получава собствена серия със null там, където
-// няма тест на тази дата, по същия принцип като HRV/сън по-горе в чарта.
-$nat_chart_dates = array_values(array_unique(array_map(fn($t) => $t['test_date'], $nat_tests)));
-sort($nat_chart_dates);
-$nat_chart_series = [];
+// За всеки протокол: 1 тест -> самостоятелна референтна карта (без
+// delta/тренд/radar, тренд не е възможен с една точка); 2+ тестове ->
+// trend мини-графика + сравнителна таблица + radar overlay. Всичко
+// смятано веднъж тук (не наново във всеки chart/table), за да не се
+// разминат числата между блоковете. nat_build_nat_block() е дефинирана
+// по-долу, до fmt() — top-level функция, PHP я вижда независимо от реда.
+$nat_blocks = [];
 foreach ($nat_tests_by_protocol as $protocol => $tests) {
-    $by_date = [];
-    foreach ($tests as $t) {
-        $by_date[$t['test_date']] = $t;
-    }
-    $vo2 = []; $wmax = [];
-    foreach ($nat_chart_dates as $d) {
-        $vo2[]  = isset($by_date[$d]) && $by_date[$d]['vo2max_kg'] !== null ? (float)$by_date[$d]['vo2max_kg'] : null;
-        $wmax[] = isset($by_date[$d]) && $by_date[$d]['w_max_kg'] !== null ? (float)$by_date[$d]['w_max_kg'] : null;
-    }
-    $nat_chart_series[$protocol] = [
-        'label' => $nat_protocols[$protocol]['device'] ?? $protocol,
-        'vo2max_kg' => $vo2,
-        'w_max_kg' => $wmax,
-    ];
+    $nat_blocks[$protocol] = nat_build_nat_block($protocol, $tests, $nat_protocols[$protocol] ?? null);
 }
 
 // Наличните години (за бутоните), най-новата първа = избрана по подразбиране
@@ -219,6 +207,145 @@ function status_badge($status) {
 
 function fmt($value, $decimals = 1) {
     return $value === null ? '—' : number_format((float)$value, $decimals);
+}
+
+// ---------------------------------------------------------------------
+// НЦ функционални тестове (redesign): подготвя всичко, което trend
+// мини-картата + сравнителната таблица + radar-ът за ЕДИН протокол се
+// нуждаят, на едно място — за да смятат едни и същи числа, не отделни
+// копия. $tests идва в низходящ ред по дата (заявката ORDER BY test_date
+// DESC); тук се обръща във възходящ, защото таблицата/графиката вървят
+// хронологично отляво надясно.
+function nat_build_nat_block($protocol, $tests_desc, $protocol_row) {
+    $tests_asc = array_reverse($tests_desc);
+    $count = count($tests_asc);
+    $is_bike = ($protocol_row['metric'] ?? null) === 'W';
+
+    $block = [
+        'protocol' => $protocol,
+        'protocol_row' => $protocol_row,
+        'tests_asc' => $tests_asc,
+        'count' => $count,
+        'is_bike' => $is_bike,
+    ];
+    if ($count < 2) {
+        return $block; // единичен тест -> single-card, без trend/delta/radar
+    }
+
+    $first = $tests_asc[0];
+    $last = $tests_asc[$count - 1];
+    $prev = $tests_asc[$count - 2];
+
+    // Trend мини-графика: VO2max/kg по всички тестове на протокола.
+    $block['trend_labels'] = array_map(fn($t) => $t['test_date'], $tests_asc);
+    $block['trend_vo2'] = array_map(fn($t) => $t['vo2max_kg'] !== null ? (float)$t['vo2max_kg'] : null, $tests_asc);
+
+    // Хелпър: слепва label/value/decimals/unit с и sign (истинска посока —
+    // за стрелката) И color (up/down/flat CSS клас — nat_delta_info() решава
+    // дали метриката е neutral), вместо template-ът да гадае цвета от sign.
+    $make_trend_metric = function ($label, $metric_key, $first_val, $last_val, $decimals, $unit = '', $pct = null) use ($first, $last) {
+        $info = nat_delta_info($metric_key, $first_val, $last_val, $decimals, $first['protocol'], $last['protocol']);
+        return [
+            'label' => $label, 'value' => $last_val, 'decimals' => $decimals, 'unit' => $unit,
+            'pct' => $pct, 'sign' => $info['sign'], 'color' => $info['color'],
+        ];
+    };
+
+    $trend_metrics = [];
+    $trend_metrics[] = $make_trend_metric('VO2max/kg', 'vo2max_kg', $first['vo2max_kg'], $last['vo2max_kg'], 2, '', nat_delta_pct($first['vo2max_kg'], $last['vo2max_kg']));
+    if ($is_bike) {
+        $trend_metrics[] = $make_trend_metric('W/kg', 'w_max_kg', $first['w_max_kg'], $last['w_max_kg'], 2, '', nat_delta_pct($first['w_max_kg'], $last['w_max_kg']));
+    } else {
+        $trend_metrics[] = $make_trend_metric('S_max', 's_max_kmh', $first['s_max_kmh'], $last['s_max_kmh'], 1, ' км/ч', nat_delta_pct($first['s_max_kmh'], $last['s_max_kmh']));
+    }
+    $trend_metrics[] = $make_trend_metric("La 2' (посл.)", 'la_2', $first['la_2'], $last['la_2'], 1, '', null);
+    $block['trend_metrics'] = $trend_metrics;
+
+    // Radar: personal best на всяко поле измежду ВСИЧКИ тестове на този
+    // протокол (не само последните два) — изисквано изрично, за да не се
+    // хардкодне "последният тест = 100%" когато реалният личен максимум е
+    // бил при по-стар тест (виж La 6' при Мира — лактатът ѝ се покачва с
+    // времето, значи възстановяването ѝ реално се влошава на тази ос,
+    // въпреки че мощността/VO2max растат).
+    $radar_fields = ['vo2max_kg' => ['label' => 'VO2max/kg', 'lower' => false]];
+    if ($is_bike) {
+        $radar_fields['w_max_kg'] = ['label' => 'W_max/kg', 'lower' => false];
+    } else {
+        $radar_fields['s_max_kmh'] = ['label' => 'S_max', 'lower' => false];
+    }
+    $radar_fields['hr_max'] = ['label' => 'HR_max', 'lower' => false];
+    $radar_fields['la_6'] = ['label' => "Възст. (1/La 6')", 'lower' => true];
+    $radar_fields['muscle_pct'] = ['label' => 'Мускулна %', 'lower' => false];
+
+    $radar_labels = [];
+    $radar_latest = [];
+    $radar_prev = [];
+    foreach ($radar_fields as $field => $meta) {
+        $best = nat_radar_best($tests_asc, $field, $meta['lower']);
+        if ($best === null) continue;
+        $latest_pct = nat_radar_pct($last[$field] ?? null, $best['value'], $meta['lower']);
+        $prev_pct = nat_radar_pct($prev[$field] ?? null, $best['value'], $meta['lower']);
+        if ($latest_pct === null || $prev_pct === null) continue; // липсваща стойност -> пропусни оста и за двете серии
+        $radar_labels[] = $meta['label'];
+        $radar_latest[] = round($latest_pct, 1);
+        $radar_prev[] = round($prev_pct, 1);
+    }
+    $block['radar_labels'] = $radar_labels;
+    $block['radar_latest'] = $radar_latest;
+    $block['radar_prev'] = $radar_prev;
+    $block['radar_latest_date'] = $last['test_date'];
+    $block['radar_prev_date'] = $prev['test_date'];
+
+    return $block;
+}
+
+function nat_delta_cell_html($metric_key, $first_val, $last_val, $decimals = 1, $unit = '', $protocol_a = null, $protocol_b = null) {
+    $info = nat_delta_info($metric_key, $first_val, $last_val, $decimals, $protocol_a, $protocol_b);
+    if ($info['diff'] === null) {
+        return '<span class="delta flat">—</span>';
+    }
+    $arrow = nat_delta_arrow($info['sign']);
+    $abs = number_format(abs($info['diff']), $decimals);
+    return '<span class="delta ' . htmlspecialchars($info['color']) . '">' . $arrow . ' ' . htmlspecialchars($abs . $unit) . '</span>';
+}
+
+function nat_comp_delta_cell_html($first_muscle, $last_muscle) {
+    $info = nat_delta_info('muscle_pct', $first_muscle, $last_muscle, 1);
+    if ($info['diff'] === null) {
+        return '<span class="delta flat">—</span>';
+    }
+    $arrow = nat_delta_arrow($info['sign']);
+    return '<span class="delta ' . htmlspecialchars($info['color']) . '">' . $arrow . ' мускул</span>';
+}
+
+function nat_epz_text($from, $to) {
+    if ($from === null || $to === null) return '—';
+    return (int)$from . '–' . (int)$to;
+}
+
+// Лентичка = реален дял от телесното тегло (fat_pct + muscle_pct), НЕ
+// рескейлнати спрямо сбора им — остатъкът (кости/вода/органи) остава
+// незапълнен, вместо мокъпа да си измисля общ знаменател от 100%.
+function nat_comp_bar_html($fat_pct, $fat_kg, $muscle_pct, $muscle_kg) {
+    $fat_w = $fat_pct !== null ? max(0, min(100, (float)$fat_pct)) : 0;
+    $muscle_w = $muscle_pct !== null ? max(0, min(100, (float)$muscle_pct)) : 0;
+    $fat_txt = $fat_pct !== null
+        ? number_format((float)$fat_pct, 1) . '%' . ($fat_kg !== null ? ' (' . number_format((float)$fat_kg, 1) . ' кг)' : '')
+        : '—';
+    $muscle_txt = $muscle_pct !== null
+        ? number_format((float)$muscle_pct, 1) . '%' . ($muscle_kg !== null ? ' (' . number_format((float)$muscle_kg, 1) . ' кг)' : '')
+        : '—';
+    return '<span class="comp-bar"><span class="fat" style="width:' . $fat_w . '%"></span><span class="muscle" style="width:' . $muscle_w . '%"></span></span>'
+        . htmlspecialchars($fat_txt) . ' / ' . htmlspecialchars($muscle_txt);
+}
+
+function nat_la_cell_html($la, $hr, $decimals = 1) {
+    if ($la === null) return '—';
+    $text = number_format((float)$la, $decimals);
+    if ($hr !== null) {
+        $text .= ' <span style="color:var(--muted);font-weight:400;font-size:11px;">(HR ' . (int)$hr . ')</span>';
+    }
+    return $text;
 }
 
 // Етикети на етапите по дисциплина — огледало на LEG_MAP в fetch_local_results.py.
@@ -319,6 +446,9 @@ $alert_type_labels = [
             --muted: #898781;
             --grid: #e1e0d9;
             --surface: #ffffff;
+            --up: #1e7d3a;
+            --down: #b03a3a;
+            --flat: #898781;
         }
         body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 20px; color: var(--ink); }
         a { color: #2250e3; text-decoration: none; }
@@ -424,6 +554,61 @@ $alert_type_labels = [
             .split-time { font-size: 16px; }
             .split-panel { padding: 12px 14px; }
         }
+        /* ---- НЦ функционални тестове: protocol block ---- */
+        .protocol-block { margin-top: 28px; border-top: 1px solid var(--grid); padding-top: 20px; }
+        .protocol-block:first-of-type { margin-top: 0; border-top: none; padding-top: 0; }
+        .protocol-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 2px; }
+        .protocol-head h3 { margin: 0; font-size: 15.5px; }
+        .protocol-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        .protocol-meta { font-size: 12px; color: var(--muted); margin: 0 0 14px; }
+        .protocol-grid { display: grid; grid-template-columns: 1.1fr 1.4fr; gap: 20px; align-items: start; }
+        @media (max-width: 900px) { .protocol-grid { grid-template-columns: 1fr; } }
+
+        /* ---- trend mini-card ---- */
+        .trend-card { background: #fafbfc; border: 1px solid var(--grid); border-radius: 8px; padding: 14px 16px; }
+        .trend-card .chart-wrap { position: relative; height: 150px; margin-top: 6px; }
+        .trend-metrics { display: flex; gap: 18px; margin-top: 12px; flex-wrap: wrap; }
+        .trend-metric { flex: 1; min-width: 90px; }
+        .trend-metric .tm-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+        .trend-metric .tm-value { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 1px; }
+        .tm-delta { font-size: 11.5px; font-weight: 600; margin-left: 4px; }
+        .tm-delta.up { color: var(--up); } .tm-delta.down { color: var(--down); } .tm-delta.flat { color: var(--flat); }
+
+        /* ---- comparison table: metrics as rows, tests as columns (sticky first col) ---- */
+        .cmp-wrap { overflow-x: auto; border: 1px solid var(--grid); border-radius: 8px; }
+        .cmp-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+        .cmp-table th, .cmp-table td { padding: 7px 12px; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; border-bottom: 1px solid #f0efec; }
+        .cmp-table th:first-child, .cmp-table td:first-child {
+            position: sticky; left: 0; background: var(--surface); text-align: left;
+            font-weight: 600; color: var(--ink-2); z-index: 1; border-right: 1px solid var(--grid);
+        }
+        .cmp-table thead th { color: var(--muted); font-weight: 600; font-size: 11px; border-bottom: 1px solid var(--grid); background: #fafbfc; }
+        .cmp-table thead th:first-child { background: #fafbfc; }
+        .cmp-table tbody tr:nth-child(even) td { background: #fafbff; }
+        .cmp-table tbody tr:nth-child(even) td:first-child { background: #fafbff; }
+        .cmp-table .group-row td { border-bottom: none; }
+        .cmp-table .group-row td:first-child { padding-top: 14px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); background: transparent; border-right: none; }
+        .cmp-table .delta-col { border-left: 2px solid var(--grid); }
+        .delta { font-weight: 700; }
+        .delta.up { color: var(--up); } .delta.down { color: var(--down); } .delta.flat { color: var(--flat); font-weight: 600; }
+
+        /* ---- body composition mini bars (истински дял от теглото: fat_pct + muscle_pct, остатъкът е незапълнен) ---- */
+        .comp-bar-row td { padding-top: 4px; padding-bottom: 4px; }
+        .comp-bar { display: inline-flex; width: 84px; height: 8px; border-radius: 4px; overflow: hidden; vertical-align: middle; margin-right: 6px; background: #eee; }
+        .comp-bar span.fat { background: #f0b562; display: block; height: 100%; }
+        .comp-bar span.muscle { background: var(--series-1); display: block; height: 100%; }
+
+        /* ---- single-point card (протокол с 1 тест — тренд все още невъзможен) ---- */
+        .single-card { background: #fafbfc; border: 1px solid var(--grid); border-radius: 8px; padding: 16px 18px; display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
+        .single-stat .tm-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+        .single-stat .tm-value { font-size: 20px; font-weight: 700; margin-top: 1px; }
+        .single-note { font-size: 12px; color: var(--muted); font-style: italic; margin-left: auto; max-width: 260px; }
+        .single-detail { flex-basis: 100%; font-size: 12px; color: var(--ink-2); margin: 4px 0 0; }
+
+        /* ---- radar ---- */
+        .radar-card { margin-top: 24px; }
+        .radar-card .chart-wrap { position: relative; height: 300px; max-width: 420px; margin: 0 auto; }
+
         .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 20px; }
         .tile { background: var(--surface); border-radius: 8px; padding: 14px 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
         .tile .label { font-size: 13px; color: var(--ink-2); }
@@ -866,71 +1051,210 @@ $alert_type_labels = [
 
     <div class="table-card" style="margin-top:20px;">
         <h2>Национални функционални тестове (НЦ)</h2>
-        <?php if ($nat_tests): ?>
+        <?php if ($nat_tests):
+            // Payload за JS chart-овете по-долу (trend мини-графика + radar
+            // на протокол с 2+ теста) — събран тук, вкаран в <script> накрая.
+            $nat_js_charts = [];
+        ?>
         <p class="hint" style="margin:0 0 16px;">
-            Отделно от клубните лактатни тестове по-горе — различен протокол, стойностите не са пряко сравними между вело и тредбанд (виж бележките под всяка таблица).
+            Отделно от клубните лактатни тестове по-горе — различен протокол. Стойности между вело и тредбанд
+            не се сравняват директно (различен физиологичен таван за същия атлет) — <code>nat_tests_comparable()</code>
+            пази това навсякъде по-долу.
         </p>
 
-        <div class="charts">
-            <div class="chart-card">
-                <h2>VO2max/kg</h2>
-                <p class="hint">Отделна серия за всеки протокол — не се свързват с права линия</p>
-                <div class="chart-wrap"><canvas id="chartNatVo2max"></canvas></div>
-            </div>
-            <div class="chart-card">
-                <h2>W_max/kg</h2>
-                <p class="hint">Само вело протоколи (тредбандът няма W_max)</p>
-                <div class="chart-wrap"><canvas id="chartNatWmax"></canvas></div>
-            </div>
-        </div>
-
-        <?php foreach ($nat_tests_by_protocol as $protocol => $tests):
-            $protocol_row = $nat_protocols[$protocol] ?? null;
+        <?php foreach ($nat_blocks as $protocol => $block):
+            $protocol_row = $block['protocol_row'];
             $device_label = $protocol_row['device'] ?? $protocol;
             $description = nat_protocol_description($protocol_row);
+            $dot_color = $block['is_bike'] ? 'var(--series-1)' : 'var(--series-2)';
+            $canvas_id = 'natTrend_' . preg_replace('/[^a-zA-Z0-9]/', '_', $protocol);
+            $radar_id = 'natRadar_' . preg_replace('/[^a-zA-Z0-9]/', '_', $protocol);
         ?>
-        <h3 style="margin:24px 0 4px;font-size:15px;"><?= htmlspecialchars($device_label) ?></h3>
-        <?php if ($description): ?>
-        <p class="hint" style="margin:0 0 10px;"><?= htmlspecialchars($description) ?></p>
-        <?php endif; ?>
-        <table class="nat-tests-table">
-            <thead>
-                <tr><th>Дата</th><th><?= ($protocol_row['metric'] ?? '') === 'W' ? 'W_max' : 'S_max' ?></th><th>VO2max/kg</th><th>HR_max</th><th>ЕПЗ</th></tr>
-            </thead>
-            <tbody>
-                <?php foreach ($tests as $t): ?>
-                <tr class="result-row nat-test-row" tabindex="0" role="button" aria-expanded="false">
-                    <td class="event-date"><?= htmlspecialchars($t['test_date']) ?></td>
-                    <td><?= nat_primary_metric($t, $protocol_row) ?></td>
-                    <td><?= fmt($t['vo2max_kg'], 2) ?></td>
-                    <td><?= $t['hr_max'] !== null ? (int)$t['hr_max'] : '—' ?></td>
-                    <td><?= $t['epz_from'] !== null && $t['epz_to'] !== null ? (int)$t['epz_from'] . '–' . (int)$t['epz_to'] : '—' ?></td>
-                </tr>
-                <tr class="result-detail nat-test-detail" style="display:none;">
-                    <td colspan="5">
-                        <div class="split-panel">
-                            <p style="margin:0 0 10px;color:var(--ink-2);font-size:13px;">
-                                Ръст: <?= fmt($t['height_cm'], 0) ?> см ·
-                                Разтег: <?= fmt($t['arm_span_cm'], 0) ?> см ·
-                                Тегло: <?= fmt($t['weight_kg'], 1) ?> кг ·
-                                АТМ: <?= fmt($t['lean_mass_kg'], 1) ?> кг
-                            </p>
-                            <p style="margin:0 0 10px;color:var(--ink-2);font-size:13px;">
-                                Мазнини: <?= fmt($t['fat_pct'], 1) ?>% (<?= fmt($t['fat_kg'], 1) ?> кг) ·
-                                Мускули: <?= fmt($t['muscle_pct'], 1) ?>% (<?= fmt($t['muscle_kg'], 1) ?> кг) ·
-                                Продължителност: <?= fmt($t['duration_min'], 1) ?> мин
-                            </p>
-                            <p style="margin:0;color:var(--ink-2);font-size:13px;">
-                                Лактат/пулс: La2 <?= fmt($t['la_2'], 1) ?> / HR2 <?= $t['hr_2'] !== null ? (int)$t['hr_2'] : '—' ?> ·
-                                La6 <?= fmt($t['la_6'], 1) ?> / HR6 <?= $t['hr_6'] !== null ? (int)$t['hr_6'] : '—' ?> ·
-                                La15 <?= fmt($t['la_15'], 1) ?>
-                            </p>
+        <div class="protocol-block">
+            <div class="protocol-head">
+                <span class="protocol-dot" style="background:<?= $dot_color ?>"></span>
+                <h3><?= htmlspecialchars($device_label) ?></h3>
+            </div>
+            <p class="protocol-meta">
+                <?= $description ? htmlspecialchars($description) : '' ?>
+                <?= $description ? ' · ' : '' ?><?= $block['count'] ?> тест<?= $block['count'] === 1 ? '' : 'а' ?>
+                <?php if ($block['count'] < 2): ?> — тренд все още не е възможен<?php endif; ?>
+            </p>
+
+            <?php if ($block['count'] < 2):
+                $t = $block['tests_asc'][0];
+            ?>
+            <div class="single-card">
+                <div class="single-stat"><div class="tm-label">Дата</div><div class="tm-value" style="font-size:15px"><?= htmlspecialchars($t['test_date']) ?></div></div>
+                <div class="single-stat"><div class="tm-label"><?= $block['is_bike'] ? 'W_max' : 'S_max' ?></div><div class="tm-value"><?= nat_primary_metric($t, $protocol_row) ?></div></div>
+                <div class="single-stat"><div class="tm-label">VO2max/kg</div><div class="tm-value"><?= fmt($t['vo2max_kg'], 2) ?></div></div>
+                <div class="single-stat"><div class="tm-label">HR_max</div><div class="tm-value"><?= $t['hr_max'] !== null ? (int)$t['hr_max'] : '—' ?></div></div>
+                <div class="single-stat"><div class="tm-label">ЕПЗ</div><div class="tm-value" style="font-size:15px"><?= nat_epz_text($t['epz_from'], $t['epz_to']) ?></div></div>
+                <div class="single-note">Един тест — показан като референтна точка, не като тренд. Следващ тест на този протокол ще отключи сравнение.</div>
+                <p class="single-detail">
+                    Ръст: <?= fmt($t['height_cm'], 0) ?> см · Разтег: <?= fmt($t['arm_span_cm'], 0) ?> см ·
+                    Тегло: <?= fmt($t['weight_kg'], 1) ?> кг · АТМ: <?= fmt($t['lean_mass_kg'], 1) ?> кг ·
+                    Продължителност: <?= fmt($t['duration_min'], 1) ?> мин<br>
+                    Състав: <?= nat_comp_bar_html($t['fat_pct'], $t['fat_kg'], $t['muscle_pct'], $t['muscle_kg']) ?><br>
+                    Лактат: La 2' <?= nat_la_cell_html($t['la_2'], $t['hr_2']) ?> ·
+                    La 6' <?= nat_la_cell_html($t['la_6'], $t['hr_6']) ?> ·
+                    La 15' <?= fmt($t['la_15'], 1) ?>
+                </p>
+            </div>
+
+            <?php else:
+                $tests_asc = $block['tests_asc'];
+                $first = $tests_asc[0];
+                $last = $tests_asc[count($tests_asc) - 1];
+                $nat_js_charts[$canvas_id] = [
+                    'labels' => $block['trend_labels'],
+                    'data' => $block['trend_vo2'],
+                    'color' => $block['is_bike'] ? '#2a78d6' : '#1baf7a',
+                ];
+                if (!empty($block['radar_labels'])) {
+                    $nat_js_charts[$radar_id] = [
+                        'type' => 'radar',
+                        'labels' => $block['radar_labels'],
+                        'latest' => $block['radar_latest'],
+                        'latest_date' => $block['radar_latest_date'],
+                        'prev' => $block['radar_prev'],
+                        'prev_date' => $block['radar_prev_date'],
+                        'color' => $block['is_bike'] ? '#2a78d6' : '#1baf7a',
+                    ];
+                }
+            ?>
+            <div class="protocol-grid">
+                <div class="trend-card">
+                    <div class="chart-wrap"><canvas id="<?= $canvas_id ?>"></canvas></div>
+                    <div class="trend-metrics">
+                        <?php foreach ($block['trend_metrics'] as $tm): ?>
+                        <div class="trend-metric">
+                            <div class="tm-label"><?= htmlspecialchars($tm['label']) ?></div>
+                            <div class="tm-value">
+                                <?= fmt($tm['value'], $tm['decimals']) . htmlspecialchars($tm['unit']) ?><?php if ($tm['sign']): ?><span class="tm-delta <?= htmlspecialchars($tm['color']) ?>">
+                                    <?= nat_delta_arrow($tm['sign']) ?><?= $tm['pct'] !== null ? ' ' . number_format(abs($tm['pct']), 0) . '%' : '' ?>
+                                </span><?php endif; ?>
+                            </div>
                         </div>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+
+                <div class="cmp-wrap">
+                    <table class="cmp-table">
+                        <thead>
+                            <tr>
+                                <th>Показател</th>
+                                <?php foreach ($tests_asc as $t): ?><th><?= htmlspecialchars($t['test_date']) ?></th><?php endforeach; ?>
+                                <th class="delta-col">Δ общо</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="group-row"><td colspan="<?= count($tests_asc) + 2 ?>">Натоварване</td></tr>
+                            <?php if ($block['is_bike']): ?>
+                            <tr>
+                                <td>W_max</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= $t['w_max'] !== null ? (int)round($t['w_max']) . ' W' : '—' ?></td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_delta_cell_html('w_max', $first['w_max'], $last['w_max'], 0, ' W', $first['protocol'], $last['protocol']) ?></td>
+                            </tr>
+                            <tr>
+                                <td>W_max/kg</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= fmt($t['w_max_kg'], 2) ?></td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_delta_cell_html('w_max_kg', $first['w_max_kg'], $last['w_max_kg'], 2, '', $first['protocol'], $last['protocol']) ?></td>
+                            </tr>
+                            <?php else: ?>
+                            <tr>
+                                <td>S_max</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= fmt($t['s_max_kmh'], 1) ?> км/ч</td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_delta_cell_html('s_max_kmh', $first['s_max_kmh'], $last['s_max_kmh'], 1, ' км/ч', $first['protocol'], $last['protocol']) ?></td>
+                            </tr>
+                            <?php endif; ?>
+                            <tr>
+                                <td>VO2max</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= fmt($t['vo2max'], 0) ?></td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_delta_cell_html('vo2max', $first['vo2max'], $last['vo2max'], 0, '', $first['protocol'], $last['protocol']) ?></td>
+                            </tr>
+                            <tr>
+                                <td>VO2max/kg</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= fmt($t['vo2max_kg'], 2) ?></td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_delta_cell_html('vo2max_kg', $first['vo2max_kg'], $last['vo2max_kg'], 2, '', $first['protocol'], $last['protocol']) ?></td>
+                            </tr>
+                            <tr>
+                                <td>HR_max</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= $t['hr_max'] !== null ? (int)$t['hr_max'] : '—' ?></td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_delta_cell_html('hr_max', $first['hr_max'], $last['hr_max'], 0, '', $first['protocol'], $last['protocol']) ?></td>
+                            </tr>
+                            <tr>
+                                <td>ЕПЗ</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= nat_epz_text($t['epz_from'], $t['epz_to']) ?></td><?php endforeach; ?>
+                                <td class="delta-col"><span class="delta flat">—</span></td>
+                            </tr>
+                            <tr>
+                                <td>Продължителност</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= fmt($t['duration_min'], 1) ?> мин</td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_delta_cell_html('duration_min', $first['duration_min'], $last['duration_min'], 1, ' мин', $first['protocol'], $last['protocol']) ?></td>
+                            </tr>
+
+                            <tr class="group-row"><td colspan="<?= count($tests_asc) + 2 ?>">Телесен състав</td></tr>
+                            <tr>
+                                <td>Тегло</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= fmt($t['weight_kg'], 1) ?> кг</td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_delta_cell_html('weight_kg', $first['weight_kg'], $last['weight_kg'], 1, ' кг', $first['protocol'], $last['protocol']) ?></td>
+                            </tr>
+                            <tr>
+                                <td>Ръст</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= fmt($t['height_cm'], 0) ?> см</td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_delta_cell_html('height_cm', $first['height_cm'], $last['height_cm'], 0, ' см', $first['protocol'], $last['protocol']) ?></td>
+                            </tr>
+                            <tr>
+                                <td>Разтег</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= fmt($t['arm_span_cm'], 0) ?> см</td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_delta_cell_html('arm_span_cm', $first['arm_span_cm'], $last['arm_span_cm'], 0, ' см', $first['protocol'], $last['protocol']) ?></td>
+                            </tr>
+                            <tr>
+                                <td>АТМ</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= fmt($t['lean_mass_kg'], 1) ?> кг</td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_delta_cell_html('lean_mass_kg', $first['lean_mass_kg'], $last['lean_mass_kg'], 1, ' кг', $first['protocol'], $last['protocol']) ?></td>
+                            </tr>
+                            <tr class="comp-bar-row">
+                                <td>Състав <span style="font-weight:400;color:var(--muted)">(мазн./муск.)</span></td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= nat_comp_bar_html($t['fat_pct'], $t['fat_kg'], $t['muscle_pct'], $t['muscle_kg']) ?></td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_comp_delta_cell_html($first['muscle_pct'], $last['muscle_pct']) ?></td>
+                            </tr>
+
+                            <tr class="group-row"><td colspan="<?= count($tests_asc) + 2 ?>">Лактат при връх</td></tr>
+                            <tr>
+                                <td>La 2'</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= nat_la_cell_html($t['la_2'], $t['hr_2']) ?></td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_delta_cell_html('la_2', $first['la_2'], $last['la_2'], 1, '', $first['protocol'], $last['protocol']) ?></td>
+                            </tr>
+                            <tr>
+                                <td>La 6'</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= nat_la_cell_html($t['la_6'], $t['hr_6']) ?></td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_delta_cell_html('la_6', $first['la_6'], $last['la_6'], 1, '', $first['protocol'], $last['protocol']) ?></td>
+                            </tr>
+                            <tr>
+                                <td>La 15'</td>
+                                <?php foreach ($tests_asc as $t): ?><td><?= fmt($t['la_15'], 1) ?></td><?php endforeach; ?>
+                                <td class="delta-col"><?= nat_delta_cell_html('la_15', $first['la_15'], $last['la_15'], 1, '', $first['protocol'], $last['protocol']) ?></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <?php if (!empty($block['radar_labels'])): ?>
+            <div class="radar-card">
+                <h3 style="margin:0 0 2px;font-size:15px;">Профил при последния тест (<?= htmlspecialchars($block['radar_latest_date']) ?>) — спрямо личния максимум</h3>
+                <p class="protocol-meta" style="margin-bottom:10px;">
+                    Всяка ос е нормализирана към собствения най-добър резултат на атлета в ТОЗИ протокол (= 100%) —
+                    личният максимум по ос може да идва от по-стар тест, затова последният тест не е задължително 100% навсякъде.
+                </p>
+                <div class="chart-wrap"><canvas id="<?= $radar_id ?>"></canvas></div>
+            </div>
+            <?php endif; ?>
+            <?php endif; ?>
+        </div>
         <?php endforeach; ?>
         <?php else: ?>
             <p class="empty">Няма национални функционални тестове</p>
@@ -941,10 +1265,7 @@ $alert_type_labels = [
 
     <script>
     const DATA = <?= json_encode($chart_data, JSON_UNESCAPED_UNICODE) ?>;
-    const NAT_DATA = <?= json_encode([
-        'dates' => $nat_chart_dates,
-        'series' => array_values($nat_chart_series),
-    ], JSON_UNESCAPED_UNICODE) ?>;
+    const NAT_CHARTS = <?= json_encode($nat_js_charts ?? [], JSON_UNESCAPED_UNICODE) ?>;
 
     const INK2 = '#52514e', MUTED = '#898781', GRID = '#e1e0d9';
     const BLUE = '#2a78d6', AQUA = '#1baf7a';
@@ -1065,52 +1386,50 @@ $alert_type_labels = [
         options: baseOptions({ reverse: true })
     });
 
-    // НЦ функционални тестове: отделна серия за всеки протокол — nat_tests_comparable()
-    // (includes/nat_tests.php) е причината да НЕ свързваме различни протоколи с една
-    // линия: тредбанд/вело дават различен VO2max за същия атлет по физиологични причини.
-    if (NAT_DATA.dates && NAT_DATA.dates.length) {
-        const NAT_COLORS = [BLUE, AQUA, '#c62828', '#f57c00'];
-        const vo2Datasets = NAT_DATA.series.map((s, i) => series(s.label, s.vo2max_kg, NAT_COLORS[i % NAT_COLORS.length]));
-        const wmaxDatasets = NAT_DATA.series
-            .filter(s => s.w_max_kg.some(v => v !== null))
-            .map((s, i) => series(s.label, s.w_max_kg, NAT_COLORS[i % NAT_COLORS.length]));
+    // НЦ функционални тестове: по един trend line chart + (ако протоколът
+    // има personal-best данни за поне 2 общи оси) радар на протокол с 2+
+    // теста. Всеки canvas id е уникален (natTrend_<protocol>/natRadar_<protocol>),
+    // затова просто минаваме през NAT_CHARTS без да гадаем броя/типа предварително —
+    // единичните тестове (single-card) изобщо нямат запис тук.
+    Object.keys(NAT_CHARTS).forEach(function (id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const cfg = NAT_CHARTS[id];
 
-        new Chart(document.getElementById('chartNatVo2max'), {
-            type: 'line',
-            data: { labels: NAT_DATA.dates, datasets: vo2Datasets },
-            options: baseOptions({ legend: true })
-        });
-
-        if (wmaxDatasets.length) {
-            new Chart(document.getElementById('chartNatWmax'), {
-                type: 'line',
-                data: { labels: NAT_DATA.dates, datasets: wmaxDatasets },
-                options: baseOptions({ legend: true })
-            });
-        }
-    }
-
-    // НЦ функционални тестове: просто expand/collapse, без year filter
-    // (тестовете са малко на брой годишно — не си заслужава допълнителна навигация).
-    (function () {
-        function toggleRow(row) {
-            const detail = row.nextElementSibling;
-            if (!detail || !detail.classList.contains('nat-test-detail')) return;
-            const willOpen = detail.style.display === 'none';
-            detail.style.display = willOpen ? '' : 'none';
-            row.classList.toggle('open', willOpen);
-            row.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
-        }
-        document.querySelectorAll('.nat-tests-table tbody tr.nat-test-row').forEach(function (row) {
-            row.addEventListener('click', function () { toggleRow(row); });
-            row.addEventListener('keydown', function (ev) {
-                if (ev.key === 'Enter' || ev.key === ' ') {
-                    ev.preventDefault();
-                    toggleRow(row);
+        if (cfg.type === 'radar') {
+            new Chart(el, {
+                type: 'radar',
+                data: {
+                    labels: cfg.labels,
+                    datasets: [
+                        {
+                            label: cfg.latest_date + ' (последен)',
+                            data: cfg.latest,
+                            borderColor: cfg.color, backgroundColor: cfg.color + '26',
+                            borderWidth: 2, pointRadius: 3
+                        },
+                        {
+                            label: cfg.prev_date,
+                            data: cfg.prev,
+                            borderColor: MUTED, backgroundColor: 'rgba(137,135,129,0.08)',
+                            borderWidth: 1.5, borderDash: [4, 3], pointRadius: 2
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, font: { size: 11 } } } },
+                    scales: { r: { min: 0, max: 100, ticks: { display: false }, grid: { color: GRID } } }
                 }
             });
-        });
-    }());
+        } else {
+            new Chart(el, {
+                type: 'line',
+                data: { labels: cfg.labels, datasets: [series('VO2max/kg', cfg.data, cfg.color)] },
+                options: baseOptions()
+            });
+        }
+    });
 
     // "Резултати по година": филтър по година + разгъващи се сплитове.
     // Всеки резултат е ДВОЙКА редове — .result-row (видим при съвпадаща

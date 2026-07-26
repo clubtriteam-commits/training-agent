@@ -50,6 +50,28 @@ If you're debugging "why didn't this ACWR value alert," check `metrics/acwr.py`'
 | **FTP** (Functional Threshold Power) | Estimated power sustainable for ~1 hour; entered separately in the lab data, not derived from the step test itself. |
 | **W/kg** | FTP divided by body weight — the standard normalized power metric for comparing cyclists of different sizes. |
 
+## National functional tests (НЦ)
+
+A second, deliberately separate step-test protocol from the club's own lactate testing (see [Lactate testing](#lactate-testing) above) — see [features.md](features.md) and [data-model.md](data-model.md#nat_functional_tests--national-center-lab-step-test-results) for why the two are never compared directly.
+
+| Term | Meaning |
+|---|---|
+| **W_max** | Maximum power reached during the incremental bike-ergometer test (watts). |
+| **W_max/kg** | `W_max` divided by body weight — the standard metric for comparing cyclists of different sizes. |
+| **VO2max** | Maximum oxygen consumption — the ceiling of aerobic capacity (mL/min). |
+| **VO2max/kg** | `VO2max` divided by body weight — allows comparison across athletes of different mass. |
+| **ЕПЗ** (Ефективна пулсова зона / Effective Heart-rate Zone) | The heart-rate range in which training produces the best aerobic effect, determined individually from the test. Shown as a range (e.g. `151–171`); has no single scalar value, so it never gets a computed delta — comparison tables always show `—` for it. |
+| **La 2' / La 6' / La 15'** | Blood lactate level (mmol/L), sampled at 2, 6, and 15 minutes after the test ends — indicates recovery speed. `La 6'` (lower is better) is the one metric in this group that gets *inverted* before radar normalization — see below. |
+| **АТМ** (Активна телесна маса / Active body mass) | Lean body mass — weight minus fat (muscle + bone + water). |
+| **Разтег** (Wingspan) | Arm span, fingertip to fingertip — an anthropometric measurement. |
+
+### Comparison table and radar rules (2026-07-26 redesign)
+
+- **Δ общо** (total delta) is always `last test − first test` for that protocol, not consecutive-test deltas — a 3-test trend's delta column reflects the full span, not the most recent step.
+- **Delta color** follows one explicit direction map (`$NAT_METRIC_DIRECTION` in `includes/nat_tests.php`): higher-is-better for load/VO2max/HR/lactate/muscle-% metrics (green ▲ / red ▼), but **тегло (weight) and ЕПЗ are always neutral/gray** regardless of direction — per explicit design requirement, not because their real delta is hidden (it's still shown, just not color-judged).
+- **Radar normalization** is per-axis personal-best across *all* of that athlete's tests on that protocol, not just the two being compared, and not a hardcoded 100 for "the latest test." A metric can legitimately show <100% for the latest test if an earlier test happens to be the athlete's personal best on that specific axis (observed in production: an athlete's peak-lactate-recovery axis got *worse* over time even as power/VO2max improved, so their most recent radar polygon doesn't touch 100% on that one axis).
+- A protocol with only 1 recorded test gets **no** delta, trend line, or radar overlay — shown as a standalone reference card instead, since a trend needs at least two points to exist.
+
 ## Race tracking
 
 | Term | Meaning |
