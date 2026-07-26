@@ -114,3 +114,12 @@ This is what `main.py`, `fetch_world_triathlon.py`, `weekly_summary.py`, `fetch_
   python test_lock_concurrency.py    # POSIX-only (fcntl) — SKIPPED with a message on Windows, meaningful only on the Linux server
   ```
 - **Manual single-script testing against live APIs** requires the real API keys in `config/secrets.env` locally — most contributors won't have these and will only exercise the seeded-data + dashboard path.
+
+## Continuous Integration (`.github/workflows/ci.yml`, added 2026-07-26)
+
+Runs on every push to `main` and every PR — two independent jobs, no shared state:
+
+- **`php-lint`** — `php -l` over every file in `dashboard-backup/`, on PHP 8.2 (`shivammathur/setup-php`) to match what production actually serves (see [ADR 0007](adr/0007-limitations.md) for why pinning this matters — the shared host's bare `php` on SSH is a stale 5.3.29 symlink unrelated to the live site).
+- **`python-tests`** — installs `requirements.txt`, runs `test_alert_system.py` and `test_lock_concurrency.py` on Python 3.11. Both are plain scripts (no pytest, no secrets needed — `test_alert_system.py` uses a throwaway temp SQLite file), so a plain `python3 file.py` exit code is the pass/fail signal.
+
+**Known gap, by design, not an oversight:** this CI runs on 3.11, but the actual cron jobs these tests exercise (`main.py`, `fetch_world_triathlon.py`) run in production on system Python **3.6.8** (see [ADR 0005](adr/0005-venv-python311.md)) — GitHub Actions no longer supports 3.6 out of the box. A green CI run proves the logic is correct on a modern interpreter; it does **not** prove 3.6 compatibility. `test_lock_concurrency.py` has already needed a dedicated 3.6-compat patch once (see [CHANGELOG.md](CHANGELOG.md) Phase 4) — a future 3.11-only regression on that axis would pass CI and still break in production. Manually re-verify against 3.6 (or the server directly) for changes to the 3.6-targeted scripts specifically.

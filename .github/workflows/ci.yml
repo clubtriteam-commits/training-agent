@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  php-lint:
+    name: php -l (dashboard-backup/)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to 8.2 to match what production actually serves requests with
+      # (ea-php82, confirmed 2026-07-26 via the domain's .htaccess AddHandler —
+      # see docs/adr/0007-limitations.md). The bare `php` on the shared host's
+      # SSH shell resolves to a stale 5.3.29 distro symlink that has nothing to
+      # do with the live site; don't let CI drift back into that trap.
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+
+      - name: Lint every PHP file
+        run: find dashboard-backup -name '*.php' -print0 | xargs -0 -n1 -- php -l
+
+  python-tests:
+    name: Python tests (test_alert_system.py, test_lock_concurrency.py)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Modern 3.11 to match the venv already used for fetch_lab_data.py
+      # (see docs/adr/0005-venv-python311.md) — the production cron jobs these
+      # tests exercise (main.py, fetch_world_triathlon.py) actually run under
+      # system Python 3.6.8, which GitHub Actions no longer supports out of
+      # the box. A green run here proves the logic is correct on a modern
+      # interpreter, not that it's 3.6-compatible — see the same ADR for the
+      # class of stdlib/f-string drift that's already bitten this repo once
+      # (test_lock_concurrency.py needed a dedicated 3.6 patch, commit history
+      # refers). Treat this gap as known, not silently assumed away.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: test_alert_system.py
+        run: python3 test_alert_system.py
+
+      - name: test_lock_concurrency.py
+        # POSIX-only (fcntl) — self-skips with exit 0 on non-POSIX, but
+        # actually runs for real here since GitHub's ubuntu runners are POSIX.
+        run: python3 test_lock_concurrency.py
