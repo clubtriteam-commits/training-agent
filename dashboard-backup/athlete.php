@@ -135,6 +135,34 @@ $local_result_years = array_values(array_unique(array_map(
 )));
 $local_default_year = $local_result_years[0] ?? null;
 
+// Обединена хронология (местни + World Triathlon) — сплитовете от двата
+// източника в един ред по дата, за да се вижда прогресията независимо
+// откъде идва състезанието. Само триатлон: дуатлон/акватлон местните
+// резултати нямат плуване/колело/бягане в тези колони.
+$combined_results = [];
+try {
+    $stmt = $pdo->prepare("
+        SELECT event_date, 'local' AS source,
+               leg1 AS swim, t1, leg2 AS bike, t2, leg3 AS run, total_time
+        FROM local_results r JOIN local_events e ON e.event_id = r.event_id
+        WHERE r.athlete_name = ? AND r.sport = 'triathlon'
+
+        UNION ALL
+
+        SELECT event_date, 'wt' AS source,
+               swim_split AS swim, t1_split AS t1, bike_split AS bike,
+               t2_split AS t2, run_split AS run, total_time
+        FROM world_triathlon_results
+        WHERE athlete_name = ?
+
+        ORDER BY event_date DESC
+    ");
+    $stmt->execute([$athlete_name, $athlete_name]);
+    $combined_results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $combined_results = [];
+}
+
 // Лактатни тестове (fetch_lab_data.py, от Google Sheet; join по athlete_name
 // по същата причина като world_triathlon по-горе — Sheet-ът не познава intervals ID).
 // Таблицата може още да не съществува при стара база — прескачаме тихо.
@@ -474,6 +502,9 @@ $alert_type_labels = [
         .pos-badge.pos-silver { background: #ececec; color: #5f5f5f; }
         .pos-badge.pos-bronze { background: #f3e2d0; color: #8a5a2a; }
         .pos-badge.pos-dnx    { background: #f9e9e9; color: #b03a3a; font-size: 12px; letter-spacing: 0.03em; }
+        .source-badge { display: inline-block; padding: 3px 10px; border-radius: 8px; font-weight: 600; font-size: 12px; }
+        .source-badge.source-wt    { background: #eef1fb; color: #2250e3; }
+        .source-badge.source-local { background: #e8f5ec; color: #1f7a3d; }
         .result-detail td { background: transparent; padding: 0 0 14px; }
         .split-panel { background: #fafbff; border: 1px solid #e4e8f7; border-left: 3px solid #2250e3; border-radius: 10px; padding: 14px 18px; }
         .splits-grid { display: grid; grid-template-columns: repeat(5, minmax(90px, 1fr)); gap: 12px 18px; }
@@ -925,6 +956,40 @@ $alert_type_labels = [
         </table>
         <?php else: ?>
             <p class="empty">Няма резултати от местни състезания</p>
+        <?php endif; ?>
+    </div>
+
+    <div class="table-card" style="margin-top:20px;">
+        <h2>Обединена хронология</h2>
+        <?php if ($combined_results): ?>
+        <table id="combined-results-table">
+            <thead>
+                <tr>
+                    <th>Дата</th><th>Източник</th><th>Плуване</th><th>T1</th>
+                    <th>Колело</th><th>T2</th><th>Бягане</th><th>Общо</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($combined_results as $r): ?>
+                <tr>
+                    <td class="event-date"><?= htmlspecialchars($r['event_date']) ?></td>
+                    <td>
+                        <span class="source-badge source-<?= htmlspecialchars($r['source']) ?>">
+                            <?= $r['source'] === 'wt' ? 'Официално' : 'Местно' ?>
+                        </span>
+                    </td>
+                    <td><?= $r['swim'] !== null && $r['swim'] !== '' ? htmlspecialchars($r['swim']) : '—' ?></td>
+                    <td><?= $r['t1'] !== null && $r['t1'] !== '' ? htmlspecialchars($r['t1']) : '—' ?></td>
+                    <td><?= $r['bike'] !== null && $r['bike'] !== '' ? htmlspecialchars($r['bike']) : '—' ?></td>
+                    <td><?= $r['t2'] !== null && $r['t2'] !== '' ? htmlspecialchars($r['t2']) : '—' ?></td>
+                    <td><?= $r['run'] !== null && $r['run'] !== '' ? htmlspecialchars($r['run']) : '—' ?></td>
+                    <td class="total-time"><?= $r['total_time'] !== null && $r['total_time'] !== '' ? htmlspecialchars($r['total_time']) : '—' ?></td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php else: ?>
+            <p class="empty">Няма данни</p>
         <?php endif; ?>
     </div>
 
