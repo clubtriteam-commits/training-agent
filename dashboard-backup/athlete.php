@@ -163,6 +163,25 @@ try {
     $combined_results = [];
 }
 
+// HR/power zone разбивка по активност (main.py's ежедневен "zones" step,
+// от Intervals.icu — виж storage/db.py:upsert_activity_zones()). Таблицата
+// може още да не съществува на стара база — прескачаме тихо.
+$activity_zones = [];
+try {
+    $stmt = $pdo->prepare("
+        SELECT activity_id, activity_date, activity_type, has_power,
+               hr_zone_times_json, power_zone_times_json,
+               icu_average_watts, icu_weighted_avg_watts, icu_ftp
+        FROM activity_zones
+        WHERE athlete_name = ?
+        ORDER BY activity_date DESC
+    ");
+    $stmt->execute([$athlete_name]);
+    $activity_zones = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $activity_zones = [];
+}
+
 // Лактатни тестове (fetch_lab_data.py, от Google Sheet; join по athlete_name
 // по същата причина като world_triathlon по-горе — Sheet-ът не познава intervals ID).
 // Таблицата може още да не съществува при стара база — прескачаме тихо.
@@ -394,6 +413,56 @@ function local_sport_label($sport) {
     return $labels[$sport] ?? $sport;
 }
 
+// HR идва плосък позиционен масив (icu_hr_zone_times, storage/db.py пази го
+// 1:1 като hr_zone_times_json) — позиция = зона, Z1 на индекс 0. Power идва
+// списък от {"id","secs"} обекти (icu_zone_times, вкл. "SS" sweet-spot като
+// последен елемент) — двата формата се различават, защото такива са и в
+// самия Intervals.icu отговор (виж разузнаването в data-model.md). Тук ги
+// свеждаме до един и същ [{label, secs}] за общ рендер по-долу.
+function zone_segments($zone_times_json, $power_style) {
+    if ($zone_times_json === null) return [];
+    $times = json_decode($zone_times_json, true);
+    if (!$times) return [];
+    if ($power_style) {
+        return array_map(fn($t) => ['label' => $t['id'], 'secs' => (int)$t['secs']], $times);
+    }
+    return array_values(array_map(
+        fn($i, $secs) => ['label' => 'Z' . ($i + 1), 'secs' => (int)$secs],
+        array_keys($times), $times
+    ));
+}
+
+// Цветовият канал носи само груба интензивност (5 стъпки от ordinal синята
+// рампа — виж :root по-горе и dataviz skill-а), не индивидуален цвят на
+// всяка зона: 7-8 напълно различими стъпки от един hue не се събират в
+// достъпния lightness диапазон (validate_palette.js --ordinal хвърля
+// adjacent-ΔL FAIL над ~5 стъпки за accessible банда). Точната секунда по
+// зона винаги е налична текстово в detail панела — цветът е само ориентир.
+function zone_bucket($index, $count) {
+    if ($count <= 1) return 5;
+    return min(5, 1 + (int)floor($index * 5 / $count));
+}
+
+// Връща <span> stacked bar + подпис "общо време" за един zone_segments()
+// резултат. Нулевите зони се пропускат от бара (нищо за рисуване), но се
+// броят в общото време; 4px заоблени краища идват от :first-child/:last-child
+// в CSS — работят автоматично, защото само ненулевите сегменти влизат в DOM-а.
+function zone_bar_html($segments) {
+    $total = array_sum(array_column($segments, 'secs'));
+    if ($total <= 0) return '—';
+    $n = count($segments);
+    $bars = '';
+    foreach ($segments as $i => $s) {
+        if ($s['secs'] <= 0) continue;
+        $pct = $s['secs'] / $total * 100;
+        $bucket = zone_bucket($i, $n);
+        $bars .= '<span style="width:' . $pct . '%;background:var(--zone-' . $bucket . ')" title="'
+            . htmlspecialchars($s['label']) . ': ' . gmdate('H:i:s', $s['secs']) . '"></span>';
+    }
+    $mins = round($total / 60);
+    return '<span class="zone-bar">' . $bars . '</span><span class="zone-bar-total">' . $mins . ' мин</span>';
+}
+
 // LT1/LT2 за overview таблицата: ръчна стойност от Sheet-а както си е,
 // естимирана (интерполирана) стойност — с приглушен "(est.)" суфикс,
 // за да не се бъркат двете на пръв поглед.
@@ -477,6 +546,16 @@ $alert_type_labels = [
             --up: #1e7d3a;
             --down: #b03a3a;
             --flat: #898781;
+            /* Ordinal рампа за zone bar-овете (виж zone_bucket() по-долу) —
+               5 стъпки от синия sequential hue, validate_palette.js --ordinal
+               PASS (adjacent ΔL >= 0.06); 7-8 напълно различими стъпки не се
+               събират в достъпния lightness диапазон, затова само 5 grosso-modo
+               интензивност бъкета, не индивидуален цвят на всяка зона. */
+            --zone-1: #86b6ef;
+            --zone-2: #5598e7;
+            --zone-3: #2a78d6;
+            --zone-4: #1c5cab;
+            --zone-5: #0d366b;
         }
         body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 20px; color: var(--ink); }
         a { color: #2250e3; text-decoration: none; }
@@ -628,6 +707,14 @@ $alert_type_labels = [
         .comp-bar { display: inline-flex; width: 84px; height: 8px; border-radius: 4px; overflow: hidden; vertical-align: middle; margin-right: 6px; background: #eee; }
         .comp-bar span.fat { background: #f0b562; display: block; height: 100%; }
         .comp-bar span.muscle { background: var(--series-1); display: block; height: 100%; }
+        /* Zone bar — 4px заоблени краища само на първия/последния РЕНДЕРНАТ
+           сегмент (нулевите зони липсват от DOM-а, виж zone_bar_html()), 2px
+           surface gap между сегментите през flex gap. */
+        .zone-bar { display: inline-flex; width: 160px; height: 14px; gap: 2px; vertical-align: middle; margin-right: 8px; background: var(--grid); border-radius: 4px; overflow: hidden; }
+        .zone-bar span { display: block; height: 100%; }
+        .zone-bar-total { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+        .zone-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 12px; font-size: 12px; color: var(--ink-2); }
+        .zone-legend span.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
 
         /* ---- single-point card (протокол с 1 тест — тренд все още невъзможен) ---- */
         .single-card { background: #fafbfc; border: 1px solid var(--grid); border-radius: 8px; padding: 16px 18px; display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
@@ -990,6 +1077,78 @@ $alert_type_labels = [
         </table>
         <?php else: ?>
             <p class="empty">Няма данни</p>
+        <?php endif; ?>
+    </div>
+
+    <div class="table-card" style="margin-top:20px;">
+        <h2>Зони на тренировка</h2>
+        <?php if ($activity_zones): ?>
+        <div class="zone-legend">
+            <span>По-лек</span>
+            <span><span class="swatch" style="background:var(--zone-1)"></span>Z1-2</span>
+            <span><span class="swatch" style="background:var(--zone-2)"></span></span>
+            <span><span class="swatch" style="background:var(--zone-3)"></span>средна</span>
+            <span><span class="swatch" style="background:var(--zone-4)"></span></span>
+            <span><span class="swatch" style="background:var(--zone-5)"></span>макс.</span>
+            <span>По-интензивен</span>
+            <span style="color:var(--muted)">— грубо, точните секунди по зона са в детайлите на реда</span>
+        </div>
+        <table id="zone-results-table">
+            <thead>
+                <tr><th>Дата</th><th>Тип</th><th>HR зони</th><th>Power зони</th></tr>
+            </thead>
+            <tbody>
+                <?php foreach ($activity_zones as $r):
+                    $hr_segs = zone_segments($r['hr_zone_times_json'], false);
+                    $power_segs = zone_segments($r['power_zone_times_json'], true);
+                ?>
+                <tr class="result-row zone-result-row" tabindex="0" role="button" aria-expanded="false">
+                    <td class="event-date"><?= htmlspecialchars($r['activity_date']) ?></td>
+                    <td class="msg"><?= htmlspecialchars($r['activity_type'] ?? '—') ?></td>
+                    <td><?= zone_bar_html($hr_segs) ?></td>
+                    <td><?= zone_bar_html($power_segs) ?></td>
+                </tr>
+                <tr class="result-detail zone-result-detail" style="display:none;">
+                    <td colspan="4">
+                        <div class="split-panel">
+                            <?php if ($hr_segs): ?>
+                            <p style="margin:0 0 4px;font-weight:600;">HR зони</p>
+                            <div class="splits-grid">
+                                <?php foreach ($hr_segs as $s): if ($s['secs'] <= 0) continue; ?>
+                                <div class="split-cell">
+                                    <div class="split-label"><?= htmlspecialchars($s['label']) ?></div>
+                                    <div class="split-time"><?= gmdate('H:i:s', $s['secs']) ?></div>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <?php endif; ?>
+                            <?php if ($power_segs): ?>
+                            <p style="margin:10px 0 4px;font-weight:600;">Power зони</p>
+                            <div class="splits-grid">
+                                <?php foreach ($power_segs as $s): if ($s['secs'] <= 0) continue; ?>
+                                <div class="split-cell">
+                                    <div class="split-label"><?= htmlspecialchars($s['label']) ?></div>
+                                    <div class="split-time"><?= gmdate('H:i:s', $s['secs']) ?></div>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <p style="margin:10px 0 0;font-size:12px;color:var(--ink-2);">
+                                Ср. мощност: <?= $r['icu_average_watts'] !== null ? round($r['icu_average_watts']) . 'W' : '—' ?> ·
+                                Норм. мощност: <?= $r['icu_weighted_avg_watts'] !== null ? round($r['icu_weighted_avg_watts']) . 'W' : '—' ?> ·
+                                FTP: <?= $r['icu_ftp'] !== null ? round($r['icu_ftp']) . 'W' : '—' ?>
+                            </p>
+                            <?php endif; ?>
+                            <?php if (!$hr_segs && !$power_segs): ?>
+                                <div class="no-splits">Няма детайлни данни</div>
+                            <?php endif; ?>
+                        </div>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php else: ?>
+            <p class="empty">Няма записани zone данни</p>
         <?php endif; ?>
     </div>
 
@@ -1602,6 +1761,28 @@ $alert_type_labels = [
                 if (ev.target.closest('a')) return;
                 toggleRow(row);
             });
+            row.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault();
+                    toggleRow(row);
+                }
+            });
+        });
+    }());
+
+    // Зони на тренировка: същото expand/collapse, без year filter (7-8 реда,
+    // не си заслужава допълнителна навигация — виж лактатните тестове по-горе).
+    (function () {
+        function toggleRow(row) {
+            const detail = row.nextElementSibling;
+            if (!detail || !detail.classList.contains('zone-result-detail')) return;
+            const willOpen = detail.style.display === 'none';
+            detail.style.display = willOpen ? '' : 'none';
+            row.classList.toggle('open', willOpen);
+            row.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        }
+        document.querySelectorAll('#zone-results-table tbody tr.zone-result-row').forEach(function (row) {
+            row.addEventListener('click', function () { toggleRow(row); });
             row.addEventListener('keydown', function (ev) {
                 if (ev.key === 'Enter' || ev.key === ' ') {
                     ev.preventDefault();
