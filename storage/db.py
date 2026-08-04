@@ -3,6 +3,7 @@ SQLite storage за история на wellness/ACWR метрики по атл
 """
 import sqlite3
 import os
+import json
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'agent.db')
 
@@ -203,6 +204,43 @@ def init_db():
         )
     ''')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_nat_tests_name ON nat_functional_tests(athlete_name)')
+
+    # HR/power zone снимка на активност, от Intervals.icu's get_activities()
+    # (вика се вече дневно за keyword/late-start — тук просто извличаме
+    # допълнителни полета от същия отговор, без нова API заявка).
+    # Границите (*_zones_json) и времената (*_zone_times_json) се пазят
+    # отделно, snapshot-нати НА активността, не веднъж на атлет — зоните
+    # се менят с времето (нов FTP/max HR), а искаме старите тренировки да
+    # пазят интерпретацията, валидна към датата им.
+    # JSON, не фиксирани zone_1..zone_N колони: броят зони е конфигурируем
+    # per athlete/sport в Intervals.icu (разузнаването видя 7 HR зони и
+    # 8 power зони — Z1-Z7 + "SS" sweet-spot — за един атлет; няма
+    # гаранция, че е еднакво за всички).
+    # power_zone_times_json пази icu_zone_times точно както идва от API-то
+    # (списък от {"id": "Z1", "secs": ...} обекти) — форматът е различен
+    # от hr_zone_times_json (плосък позиционен масив от секунди), защото
+    # такъв е и в самия Intervals.icu отговор.
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS activity_zones (
+            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            athlete_id              TEXT NOT NULL,
+            athlete_name            TEXT NOT NULL,
+            activity_id             TEXT NOT NULL,
+            activity_date           TEXT NOT NULL,
+            activity_type           TEXT,
+            has_power               INTEGER NOT NULL DEFAULT 0,
+            hr_zones_json           TEXT,
+            hr_zone_times_json      TEXT,
+            power_zones_json        TEXT,
+            power_zone_times_json   TEXT,
+            icu_average_watts       REAL,
+            icu_weighted_avg_watts  REAL,
+            icu_ftp                 REAL,
+            fetched_at              TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(athlete_id, activity_id)
+        )
+    ''')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_activity_zones_athlete ON activity_zones(athlete_id)')
 
     cur.execute(SEEN_ACTIVITIES_SCHEMA)
 
@@ -429,6 +467,69 @@ def filter_new_activities(athlete_id, activities_list):
         a for a in (activities_list or [])
         if a.get('id') is not None and mark_activity_seen(athlete_id, a['id'])
     ]
+
+
+def upsert_activity_zones(athlete_id, athlete_name, activity):
+    """Извлича HR/power zone полетата от една Intervals.icu активност
+    (както идва директно от get_activities()) и ги upsert-ва.
+
+    Прескача активности без никакви zone данни (напр. плуване без пулс —
+    някои атлети нямат HR източник за плуване; за тях се гледа нетно
+    време в спорта, не zone разбивка тук, така че празен ред би бил шум).
+    Идемпотентно по (athlete_id, activity_id) — безопасно да се вика за
+    ВСЯКА върната активност всеки ден, не само нововидените, защото
+    презаписва коректно ако данните в Intervals.icu се сменят по-късно."""
+    activity_id = activity.get('id')
+    if activity_id is None:
+        return
+
+    hr_zones = activity.get('icu_hr_zones')
+    hr_zone_times = activity.get('icu_hr_zone_times')
+    power_zones = activity.get('icu_power_zones')
+    power_zone_times = activity.get('icu_zone_times')
+    avg_watts = activity.get('icu_average_watts')
+    weighted_avg_watts = activity.get('icu_weighted_avg_watts')
+    ftp = activity.get('icu_ftp')
+
+    has_power = power_zone_times is not None or avg_watts is not None
+    if not has_power and hr_zone_times is None:
+        return
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        INSERT INTO activity_zones
+            (athlete_id, athlete_name, activity_id, activity_date, activity_type,
+             has_power, hr_zones_json, hr_zone_times_json,
+             power_zones_json, power_zone_times_json,
+             icu_average_watts, icu_weighted_avg_watts, icu_ftp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(athlete_id, activity_id) DO UPDATE SET
+            athlete_name=excluded.athlete_name,
+            activity_date=excluded.activity_date,
+            activity_type=excluded.activity_type,
+            has_power=excluded.has_power,
+            hr_zones_json=excluded.hr_zones_json,
+            hr_zone_times_json=excluded.hr_zone_times_json,
+            power_zones_json=excluded.power_zones_json,
+            power_zone_times_json=excluded.power_zone_times_json,
+            icu_average_watts=excluded.icu_average_watts,
+            icu_weighted_avg_watts=excluded.icu_weighted_avg_watts,
+            icu_ftp=excluded.icu_ftp,
+            fetched_at=CURRENT_TIMESTAMP
+    ''', (
+        str(athlete_id), athlete_name, str(activity_id),
+        (activity.get('start_date_local') or '')[:10],
+        activity.get('type'),
+        1 if has_power else 0,
+        json.dumps(hr_zones) if hr_zones is not None else None,
+        json.dumps(hr_zone_times) if hr_zone_times is not None else None,
+        json.dumps(power_zones) if power_zones is not None else None,
+        json.dumps(power_zone_times) if power_zone_times is not None else None,
+        avg_watts, weighted_avg_watts, ftp,
+    ))
+    conn.commit()
+    conn.close()
 
 
 def save_world_triathlon_ranking(athlete_id, athlete_name, world_ranking, regional_ranking):

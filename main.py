@@ -12,7 +12,9 @@ from metrics.acwr import analyze_athlete_acwr
 from metrics.readiness import analyze_readiness
 from metrics.comment_alerts import analyze_new_activities
 from metrics.late_start import analyze_late_starts
-from storage.db import filter_new_activities, get_undelivered_events, mark_delivered
+from storage.db import (
+    filter_new_activities, get_undelivered_events, mark_delivered, upsert_activity_zones,
+)
 from alerts.notifier_telegram import send_telegram_message
 
 # fcntl е POSIX-only — на production сървъра (Linux, cron) е налично,
@@ -38,7 +40,7 @@ DAILY_TELEGRAM_ALERTS = True
 
 # Стъпките след "fetch" за конкретен атлет — реда, в който се отбелязват
 # като прескочени, ако fetch-ът на wellness се провали.
-STEPS_AFTER_FETCH = ("ACWR", "readiness", "keyword", "late-start")
+STEPS_AFTER_FETCH = ("ACWR", "readiness", "keyword", "late-start", "zones")
 
 
 def acquire_lock():
@@ -161,7 +163,18 @@ def run_daily_check():
         except Exception as e:
             log_step_error(name, "keyword", e)
             log_step_error(name, "late-start", e)
+            log_step_error(name, "zones", e)
             continue
+
+        # HR/power zone снимка — върху ВСИЧКИ активности от отговора, не само
+        # new_activities: upsert-ът е идемпотентен по (athlete_id, activity_id)
+        # и презаписва коректно, ако данните в Intervals.icu се сменят по-късно.
+        try:
+            for a in activities:
+                upsert_activity_zones(athlete['intervals_id'], name, a)
+            log_step(name, "zones", True, f"{len(activities)} активности прегледани")
+        except Exception as e:
+            log_step_error(name, "zones", e)
 
         # Оплаквания в заглавие/коментар
         try:
