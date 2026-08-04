@@ -15,7 +15,7 @@
    ```bash
    curl -s -A "Mozilla/5.0 ..." -D - -d "password=..." https://<host>/index.php -o /dev/null | grep -i set-cookie
    ```
-   (Browser-like User-Agent required — see the WAF note below.) Look for `Max-Age=2592000` (30 days). If it's missing or much shorter, the cookie was created without the 30-day config.
+   Run this from your local machine, not an SSH session on the server — `curl`/`wget` aren't executable there at all (see [ADR 0007](adr/0007-limitations.md)). (Browser-like User-Agent required — see the WAF note below.) Look for `Max-Age=2592000` (30 days). If it's missing or much shorter, the cookie was created without the 30-day config.
 2. Check whether the file handling the request calls `session_start()` **before** including `includes/auth.php`, or calls it directly without going through `auth.php` at all. This was the exact root cause fixed in [ADR 0006](adr/0006-session-cookie-lifetime.md) — `index.php` and `logout.php` both had this bug historically.
 
 **Fix:** any new PHP entry point must `require_once 'includes/auth.php';` **before** any session-related code of its own, never call `session_start()` directly. If you find a page that does, that's the bug — reroute it through `auth.php`.
@@ -24,7 +24,7 @@
 
 **Symptoms:** `dashboard.php` (or any page) loads without ever prompting for a password, for a browser session that never logged in.
 
-**Diagnosis:** check `dashboard-backup/includes/auth.php`'s `require_login()` function for an early `return;` before the actual session check — this is a known, intentionally-inserted testing bypass (see [security.md](security.md)) that has been left active in production more than once. Confirm from outside the app: `curl` any protected page with no cookie — `200` instead of a `302` redirect to `index.php` confirms it's active.
+**Diagnosis:** check `dashboard-backup/includes/auth.php`'s `require_login()` function for an early `return;` before the actual session check — this is a known, intentionally-inserted testing bypass (see [security.md](security.md)) that has been left active in production more than once. Confirm from outside the app: `curl` any protected page with no cookie, run from your local machine (not via SSH on the server — see [ADR 0007](adr/0007-limitations.md)) — `200` instead of a `302` redirect to `index.php` confirms it's active.
 
 **Fix:** remove the `return;` line, redeploy via `deploy.ps1`. Double-check `api_lactate.php` still enforces its own independent session check regardless (it does, by design — see [security.md](security.md)).
 
@@ -97,7 +97,7 @@ Any file not `644` (or any directory not `755`) is a candidate.
 
 **How this actually happened:** `deploy.ps1` only ever touches `dashboard-backup/` → `public_html/.../athlete-dashboard`. It has no knowledge of, and never touches, `/home/trailser/training-agent` — the **separate** git checkout that cron actually executes Python from (see [workflows.md](workflows.md)'s "two independent paths" section). Several commits (adding a header-matching fallback in `fetch_lab_data.py`, an entire lactate-analysis feature, a session-cookie fix, a float-serialization fix) were pushed to GitHub and deployed to the PHP side via `deploy.ps1`, but the server's `/home/trailser/training-agent` checkout sat 8 commits behind for some time, silently running the old Python code on every cron fire.
 
-**Diagnosis:**
+**Diagnosis:** (see [workflows.md](workflows.md)'s Path 2 section for the exact `ssh` invocation, including the required `-i` key — a bare `ssh <host>` fails publickey auth on this server)
 ```bash
 ssh <host>
 cd /home/trailser/training-agent
@@ -125,7 +125,7 @@ git pull
    ```bash
    curl -s -A "Mozilla/5.0 ..." -b <cookiejar> -D - <url> -o /dev/null | grep -i x-sh-cache
    ```
-   `X-SH-Cache-Status: HIT` confirms a cached response is being served.
+   Run this locally — not via SSH on the server, `curl` isn't executable there (see [ADR 0007](adr/0007-limitations.md)). `X-SH-Cache-Status: HIT` confirms a cached response is being served.
 3. Confirm by appending a throwaway query parameter (`&cb=$(date +%s)`) — a fresh, uncached render should show the correct current data immediately.
 
 **Fix:** no application-side fix currently identified — no known purge mechanism has been found from outside a WHM/cPanel panel (not available in this project's access). In practice, the cache appears to eventually expire on its own; waiting is the current workaround. **Do not conclude a deploy or data sync failed based on the live page alone** — always verify against the database directly (or a diagnostic script) before assuming the code is wrong, per this incident.
