@@ -13,6 +13,9 @@ athletes:
     world_triathlon_id: "178014"
     telegram_alias: "mira"
     sport: "cycling"
+    rest_period:
+      from: "2026-08-03"
+      to: "2026-08-07"
   - name: "Миролюба Ненкова"
     intervals_id: "i273532"
     world_triathlon_id: "188676"
