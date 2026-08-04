@@ -92,11 +92,13 @@ This is the single most important operational fact in this document: **there is 
 ### Path 2: Python cron scripts → `git pull` (run on the server, via SSH)
 
 ```bash
-ssh trailser@argon.superhosting.bg -p 1022
+ssh -i ~/.ssh/id_ed25519_argon -p 1022 trailser@argon.superhosting.bg
 cd /home/trailser/training-agent
 git pull
 ./venv/bin/pip install -r requirements.txt -q   # if requirements.txt changed
 ```
+
+The `-i` key is required — this host has no other auth method enabled and no `~/.ssh/config` alias sets it by default, so a bare `ssh trailser@argon.superhosting.bg -p 1022` fails with `Permission denied (publickey,...)` unless an agent already has the key loaded. It's the same key as `deploy.config.psd1`'s `KeyFile`, just not otherwise documented outside that config file.
 
 This is what `main.py`, `fetch_world_triathlon.py`, `weekly_summary.py`, `fetch_lab_data.py`, and every module they import (`storage/`, `metrics/`, `alerts/`) actually run from. **Nothing automates this** — no post-push hook, no CI. It only happens when someone remembers to SSH in and pull.
 
