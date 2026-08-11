@@ -182,6 +182,33 @@ try {
     $activity_zones = [];
 }
 
+// Треньорски оценки от състезания (fetch_race_evaluations.py, от Google
+// Sheet таб "Оценки"; join по athlete_name — Sheet-ът не познава нито
+// intervals, нито World Triathlon ID, същата причина като local_results
+// по-горе). Join-ва се на ниво показване (не SQL) с ±1 ден толеранс към
+// world_triathlon_results/local_results, защото датите в двата източника
+// понякога се разминават с ден (виж find_evaluation_for_date()).
+// Таблицата може още да не съществува на стара база — прескачаме тихо.
+$race_evaluations = [];
+try {
+    $stmt = $pdo->prepare("
+        SELECT event_date, event_title, event_type, distance,
+               swim_start, swim_training, notes_swim,
+               t1_wetsuit, t1_mount, notes_t1,
+               bike_power, bike_technique, notes_bike,
+               t2_dismount, t2_shoes, notes_t2,
+               run_transition, run_pacing, notes_run,
+               general_note
+        FROM race_evaluations
+        WHERE athlete_name = ?
+        ORDER BY event_date ASC
+    ");
+    $stmt->execute([$athlete_name]);
+    $race_evaluations = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $race_evaluations = [];
+}
+
 // Лактатни тестове (fetch_lab_data.py, от Google Sheet; join по athlete_name
 // по същата причина като world_triathlon по-горе — Sheet-ът не познава intervals ID).
 // Таблицата може още да не съществува при стара база — прескачаме тихо.
@@ -463,6 +490,82 @@ function zone_bar_html($segments) {
     return '<span class="zone-bar">' . $bars . '</span><span class="zone-bar-total">' . $mins . ' мин</span>';
 }
 
+// Оценките от race_evaluations се join-ват на ниво показване, не в SQL —
+// event_date в двата източника (Sheet-а за оценки срещу local_results/
+// world_triathlon_results) понякога се разминава с ден (виж спецификацията
+// и sanity check-а от имплементацията), затова взимаме НАЙ-БЛИЗКАТА оценка
+// в рамките на $tolerance_days, не точно съвпадение. При равни разстояния
+// печели първата по ред (стабилно, но и не е очакван случай при 11 реда).
+function find_evaluation_for_date($evaluations, $date, $tolerance_days = 1) {
+    if (!$date) return null;
+    $target = strtotime($date);
+    if ($target === false) return null;
+    $best = null;
+    $best_diff = null;
+    foreach ($evaluations as $ev) {
+        $d = strtotime($ev['event_date']);
+        if ($d === false) continue;
+        $diff = abs($d - $target) / 86400;
+        if ($diff <= $tolerance_days && ($best_diff === null || $diff < $best_diff)) {
+            $best = $ev;
+            $best_diff = $diff;
+        }
+    }
+    return $best;
+}
+
+// "4.50" -> "4.5", "4.00" -> "4" — оценките позволяват свободна стъпка
+// (4.2, 4.75), но целите числа не бива да носят излишни нули.
+function eval_fmt_score($v) {
+    return rtrim(rtrim(sprintf('%.2f', (float)$v), '0'), '.');
+}
+
+// Същата зелено/жълто/червено логика като lactate_level_class() по-горе,
+// прагове по спецификацията: >=4.5 зелено, 3-4.5 жълто, <3 червено.
+function eval_score_badge($v) {
+    if ($v === null) return '<span class="eval-badge eval-na">—</span>';
+    $f = (float)$v;
+    $class = $f >= 4.5 ? 'eval-good' : ($f >= 3 ? 'eval-mid' : 'eval-bad');
+    return '<span class="eval-badge ' . $class . '">' . eval_fmt_score($f) . '</span>';
+}
+
+// 10-те елемента, групирани по дисциплина/преход — общ ред за detail
+// панела (4а) и heatmap-а (4б), за да не се разминат етикетите на две места.
+function eval_element_groups() {
+    return [
+        'Плуване' => [['label' => 'Старт', 'key' => 'swim_start'], ['label' => 'Тренировки', 'key' => 'swim_training'], 'notes_swim'],
+        'Т1'      => [['label' => 'Събличане', 'key' => 't1_wetsuit'], ['label' => 'Качване', 'key' => 't1_mount'], 'notes_t1'],
+        'Колело'  => [['label' => 'Мощност', 'key' => 'bike_power'], ['label' => 'Техника', 'key' => 'bike_technique'], 'notes_bike'],
+        'Т2'      => [['label' => 'Слизане', 'key' => 't2_dismount'], ['label' => 'Обуване', 'key' => 't2_shoes'], 'notes_t2'],
+        'Бягане'  => [['label' => 'Преход', 'key' => 'run_transition'], ['label' => 'Разпределение', 'key' => 'run_pacing'], 'notes_run'],
+    ];
+}
+
+// Рендер на пълния оценъчен блок (badge-ове по елемент + бележка по група +
+// обща бележка накрая) за ЕДНА оценка — споделен между WT и местния detail
+// панел (4а), за да не се разминат двата рендера с времето.
+function eval_panel_html($ev) {
+    $html = '<div class="eval-panel"><p class="eval-panel-title">Треньорска оценка'
+        . (!empty($ev['event_title']) ? ' — ' . htmlspecialchars($ev['event_title']) : '') . '</p>';
+    foreach (eval_element_groups() as $group => $spec) {
+        [$el1, $el2, $notes_key] = $spec;
+        $html .= '<div class="eval-group"><span class="eval-group-label">' . htmlspecialchars($group) . '</span> ';
+        foreach ([$el1, $el2] as $el) {
+            $html .= eval_score_badge($ev[$el['key']] ?? null)
+                . ' <span class="eval-el-label">' . htmlspecialchars($el['label']) . '</span> ';
+        }
+        if (!empty($ev[$notes_key])) {
+            $html .= '<div class="eval-note">' . htmlspecialchars($ev[$notes_key]) . '</div>';
+        }
+        $html .= '</div>';
+    }
+    if (!empty($ev['general_note'])) {
+        $html .= '<div class="eval-note eval-general-note">' . htmlspecialchars($ev['general_note']) . '</div>';
+    }
+    $html .= '</div>';
+    return $html;
+}
+
 // LT1/LT2 за overview таблицата: ръчна стойност от Sheet-а както си е,
 // естимирана (интерполирана) стойност — с приглушен "(est.)" суфикс,
 // за да не се бъркат двете на пръв поглед.
@@ -715,6 +818,24 @@ $alert_type_labels = [
         .zone-bar-total { font-variant-numeric: tabular-nums; color: var(--ink-2); }
         .zone-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 12px; font-size: 12px; color: var(--ink-2); }
         .zone-legend span.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+        /* Треньорски оценки — същата зелено/жълто/червено палитра като .lt-badge. */
+        .eval-panel { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--grid); }
+        .eval-panel-title { margin: 0 0 8px; font-weight: 600; font-size: 13px; color: var(--ink-2); }
+        .eval-group { margin-bottom: 6px; font-size: 13px; }
+        .eval-group-label { display: inline-block; min-width: 60px; font-weight: 600; color: var(--ink-2); }
+        .eval-el-label { color: var(--ink-2); margin-right: 10px; }
+        .eval-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 2px 6px; border-radius: 6px; font-weight: 700; font-size: 12px; margin-right: 2px; }
+        .eval-badge.eval-good { background: #e5f3e6; color: #2e7d32; }
+        .eval-badge.eval-mid  { background: #fdecd2; color: #b8600a; }
+        .eval-badge.eval-bad  { background: #fbe2e2; color: #c62828; }
+        .eval-badge.eval-na   { background: var(--grid); color: var(--muted); }
+        .eval-note { margin: 2px 0 0 60px; font-size: 12px; color: var(--ink-2); font-style: italic; }
+        .eval-general-note { margin: 8px 0 0; padding-top: 8px; border-top: 1px dashed var(--grid); font-style: normal; }
+        .eval-heatmap { border-collapse: collapse; white-space: nowrap; }
+        .eval-heatmap th, .eval-heatmap td { padding: 6px 10px; border-bottom: 1px solid var(--grid); font-size: 12px; }
+        .eval-heatmap th { text-align: center; color: var(--ink-2); font-weight: 600; }
+        .eval-heatmap-event { font-weight: 400; color: var(--muted); font-size: 11px; white-space: normal; }
+        .eval-heatmap-row-label { text-align: left; font-weight: 600; color: var(--ink); white-space: nowrap; }
 
         /* ---- single-point card (протокол с 1 тест — тренд все още невъзможен) ---- */
         .single-card { background: #fafbfc; border: 1px solid var(--grid); border-radius: 8px; padding: 16px 18px; display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
@@ -938,6 +1059,9 @@ $alert_type_labels = [
                             <?php else: ?>
                                 <div class="no-splits">Няма детайлни данни</div>
                             <?php endif; ?>
+                            <?php $ev = find_evaluation_for_date($race_evaluations, $r['event_date']); if ($ev): ?>
+                                <?= eval_panel_html($ev) ?>
+                            <?php endif; ?>
                         </div>
                     </td>
                 </tr>
@@ -1034,6 +1158,9 @@ $alert_type_labels = [
                             <p style="margin:10px 0 0;font-size:12px;">
                                 <a href="<?= htmlspecialchars($r['source_url']) ?>" target="_blank" rel="noopener">Официални резултати ↗</a>
                             </p>
+                            <?php endif; ?>
+                            <?php $ev = find_evaluation_for_date($race_evaluations, $r['event_date']); if ($ev): ?>
+                                <?= eval_panel_html($ev) ?>
                             <?php endif; ?>
                         </div>
                     </td>
@@ -1149,6 +1276,44 @@ $alert_type_labels = [
         </table>
         <?php else: ?>
             <p class="empty">Няма записани zone данни</p>
+        <?php endif; ?>
+    </div>
+
+    <div class="table-card" style="margin-top:20px;">
+        <h2>Оценки — сезонен тренд</h2>
+        <?php if (count($race_evaluations) >= 2): ?>
+        <div style="overflow-x:auto;">
+        <table class="eval-heatmap">
+            <thead>
+                <tr>
+                    <th>Елемент</th>
+                    <?php foreach ($race_evaluations as $ev): ?>
+                    <th>
+                        <?= htmlspecialchars($ev['event_date']) ?>
+                        <?php if (!empty($ev['event_title'])): ?>
+                        <br><span class="eval-heatmap-event"><?= htmlspecialchars($ev['event_title']) ?></span>
+                        <?php endif; ?>
+                    </th>
+                    <?php endforeach; ?>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach (eval_element_groups() as $group => $spec):
+                    [$el1, $el2, ] = $spec;
+                    foreach ([$el1, $el2] as $el):
+                ?>
+                <tr>
+                    <td class="eval-heatmap-row-label"><?= htmlspecialchars($group) ?>: <?= htmlspecialchars($el['label']) ?></td>
+                    <?php foreach ($race_evaluations as $ev): ?>
+                    <td style="text-align:center;"><?= eval_score_badge($ev[$el['key']] ?? null) ?></td>
+                    <?php endforeach; ?>
+                </tr>
+                <?php endforeach; endforeach; ?>
+            </tbody>
+        </table>
+        </div>
+        <?php else: ?>
+            <p class="empty">Нужни са поне 2 състезания с оценки за тренд</p>
         <?php endif; ?>
     </div>
 

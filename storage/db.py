@@ -205,6 +205,31 @@ def init_db():
     ''')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_nat_tests_name ON nat_functional_tests(athlete_name)')
 
+    # Треньорска субективна оценка (1-5) по 10 елемента след състезание,
+    # от Google Sheet таб "Оценки" (fetch_race_evaluations.py). athlete_name
+    # е единственият ключ към атлета (Sheet-ът не познава нито intervals,
+    # нито World Triathlon ID, същата причина като local_results/lactate_tests)
+    # — регистърът се нормализира при ingest в скрипта, не тук.
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS race_evaluations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            athlete_name TEXT NOT NULL,
+            event_date TEXT NOT NULL,
+            event_title TEXT,
+            event_type TEXT,
+            distance TEXT,
+            swim_start REAL, swim_training REAL, notes_swim TEXT,
+            t1_wetsuit REAL, t1_mount REAL, notes_t1 TEXT,
+            bike_power REAL, bike_technique REAL, notes_bike TEXT,
+            t2_dismount REAL, t2_shoes REAL, notes_t2 TEXT,
+            run_transition REAL, run_pacing REAL, notes_run TEXT,
+            general_note TEXT,
+            synced_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(athlete_name, event_date)
+        )
+    ''')
+    cur.execute('CREATE INDEX IF NOT EXISTS idx_race_evaluations_name ON race_evaluations(athlete_name)')
+
     # HR/power zone снимка на активност, от Intervals.icu's get_activities()
     # (вика се вече дневно за keyword/late-start — тук просто извличаме
     # допълнителни полета от същия отговор, без нова API заявка).
