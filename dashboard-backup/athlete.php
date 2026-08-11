@@ -836,6 +836,23 @@ $alert_type_labels = [
         .eval-heatmap th { text-align: center; color: var(--ink-2); font-weight: 600; }
         .eval-heatmap-event { font-weight: 400; color: var(--muted); font-size: 11px; white-space: normal; }
         .eval-heatmap-row-label { text-align: left; font-weight: 600; color: var(--ink); white-space: nowrap; }
+        /* Клетка с бележка: пунктирано подчертаване сигнализира "кликни ме"
+           без да добавя визуален шум за клетките без бележка. */
+        .eval-cell.has-note { cursor: pointer; border-bottom: 1px dotted var(--muted); padding-bottom: 1px; }
+        .eval-cell.has-note:hover, .eval-cell.has-note.active { border-bottom-color: var(--series-1); }
+        /* Popup — speech-bubble над/под кликнатата клетка, позициониран в JS
+           (position:fixed убягва overflow:auto на table-card без нужда от
+           преместване в DOM-а). Стрелката е чист CSS триъгълник, посоката
+           (сочи надолу/нагоре) се превключва през .eval-popup--below. */
+        .eval-popup { position: fixed; z-index: 50; max-width: 300px; background: var(--surface);
+            border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,0.18); padding: 10px 14px;
+            font-size: 13px; line-height: 1.4; white-space: normal; }
+        .eval-popup::after { content: ""; position: absolute; left: 50%; margin-left: -6px;
+            border: 6px solid transparent; }
+        .eval-popup:not(.eval-popup--below)::after { top: 100%; border-top-color: var(--surface); }
+        .eval-popup.eval-popup--below::after { bottom: 100%; border-bottom-color: var(--surface); }
+        .eval-popup-label { display: block; font-weight: 700; color: var(--ink); margin-bottom: 2px; }
+        .eval-popup-event { display: block; color: var(--muted); font-size: 11px; margin-bottom: 6px; }
 
         /* ---- single-point card (протокол с 1 тест — тренд все още невъзможен) ---- */
         .single-card { background: #fafbfc; border: 1px solid var(--grid); border-radius: 8px; padding: 16px 18px; display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
@@ -1299,18 +1316,31 @@ $alert_type_labels = [
             </thead>
             <tbody>
                 <?php foreach (eval_element_groups() as $group => $spec):
-                    [$el1, $el2, ] = $spec;
+                    [$el1, $el2, $notes_key] = $spec;
                     foreach ([$el1, $el2] as $el):
                 ?>
                 <tr>
                     <td class="eval-heatmap-row-label"><?= htmlspecialchars($group) ?>: <?= htmlspecialchars($el['label']) ?></td>
-                    <?php foreach ($race_evaluations as $ev): ?>
-                    <td style="text-align:center;"><?= eval_score_badge($ev[$el['key']] ?? null) ?></td>
+                    <?php foreach ($race_evaluations as $ev):
+                        $note = $ev[$notes_key] ?? null;
+                        $badge = eval_score_badge($ev[$el['key']] ?? null);
+                    ?>
+                    <td style="text-align:center;">
+                        <?php if (!empty($note)): ?>
+                        <span class="eval-cell has-note" tabindex="0" role="button"
+                              data-label="<?= htmlspecialchars($group . ': ' . $el['label']) ?>"
+                              data-event="<?= htmlspecialchars(($ev['event_title'] ?? '') . ' (' . $ev['event_date'] . ')') ?>"
+                              data-note="<?= htmlspecialchars($note) ?>"><?= $badge ?></span>
+                        <?php else: ?>
+                            <?= $badge ?>
+                        <?php endif; ?>
+                    </td>
                     <?php endforeach; ?>
                 </tr>
                 <?php endforeach; endforeach; ?>
             </tbody>
         </table>
+        <div id="eval-popup" class="eval-popup" role="tooltip" style="display:none;"></div>
         </div>
         <?php else: ?>
             <p class="empty">Нужни са поне 2 състезания с оценки за тренд</p>
@@ -1955,6 +1985,85 @@ $alert_type_labels = [
                 }
             });
         });
+    }());
+
+    // Оценки — сезонен тренд: клик върху клетка с бележка отваря speech-bubble
+    // popup над/под нея (position:fixed, преизчислено при всеки клик — table-card
+    // скролва хоризонтално, а fixed убягва overflow clipping без нужда клетката
+    // да е извън scroll контейнера). textContent навсякъде, не innerHTML с низове —
+    // бележките идват от треньора през Sheet, но няма причина да им вярваме
+    // сляпо като на HTML.
+    (function () {
+        const popup = document.getElementById('eval-popup');
+        if (!popup) return;
+        let activeCell = null;
+
+        function closePopup() {
+            popup.style.display = 'none';
+            if (activeCell) activeCell.classList.remove('active');
+            activeCell = null;
+        }
+
+        function openPopup(cell) {
+            popup.textContent = '';
+            const label = document.createElement('span');
+            label.className = 'eval-popup-label';
+            label.textContent = cell.dataset.label;
+            const eventLine = document.createElement('span');
+            eventLine.className = 'eval-popup-event';
+            eventLine.textContent = cell.dataset.event;
+            popup.appendChild(label);
+            popup.appendChild(eventLine);
+            popup.appendChild(document.createTextNode(cell.dataset.note));
+
+            popup.classList.remove('eval-popup--below');
+            popup.style.display = 'block';
+
+            const cellRect = cell.getBoundingClientRect();
+            const popupRect = popup.getBoundingClientRect();
+            const margin = 10;
+            let below = false;
+            let top = cellRect.top - popupRect.height - margin;
+            if (top < 8) {
+                top = cellRect.bottom + margin;
+                below = true;
+            }
+            let left = cellRect.left + cellRect.width / 2 - popupRect.width / 2;
+            left = Math.max(8, Math.min(left, window.innerWidth - popupRect.width - 8));
+
+            popup.style.top = top + 'px';
+            popup.style.left = left + 'px';
+            if (below) popup.classList.add('eval-popup--below');
+
+            if (activeCell) activeCell.classList.remove('active');
+            cell.classList.add('active');
+            activeCell = cell;
+        }
+
+        document.querySelectorAll('.eval-cell.has-note').forEach(function (cell) {
+            cell.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                if (activeCell === cell) { closePopup(); return; }
+                openPopup(cell);
+            });
+            cell.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault();
+                    cell.click();
+                } else if (ev.key === 'Escape') {
+                    closePopup();
+                }
+            });
+        });
+
+        document.addEventListener('click', function (ev) {
+            if (activeCell && !popup.contains(ev.target) && ev.target !== activeCell) closePopup();
+        });
+        document.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Escape') closePopup();
+        });
+        window.addEventListener('scroll', closePopup, true);
+        window.addEventListener('resize', closePopup);
     }());
     </script>
 </body>
