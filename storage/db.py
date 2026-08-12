@@ -441,7 +441,7 @@ def get_results_needing_positions():
     conn = get_connection()
     cur = conn.cursor()
     cur.execute('''
-        SELECT athlete_id, athlete_name, event_id, prog_id
+        SELECT athlete_id, athlete_name, event_id, prog_id, event_date
         FROM world_triathlon_results
         WHERE positions_computed_at IS NULL
         ORDER BY event_date DESC
@@ -483,7 +483,7 @@ def get_results_needing_conditions():
     conn = get_connection()
     cur = conn.cursor()
     cur.execute('''
-        SELECT athlete_id, athlete_name, event_id, prog_id
+        SELECT athlete_id, athlete_name, event_id, prog_id, event_date
         FROM world_triathlon_results
         WHERE conditions_computed_at IS NULL
         ORDER BY event_date DESC
