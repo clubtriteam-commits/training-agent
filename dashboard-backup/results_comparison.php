@@ -26,6 +26,27 @@ $athlete_name = $athlete_row['athlete_name'];
 $roster = $pdo->query("SELECT DISTINCT athlete_id, athlete_name FROM daily_metrics ORDER BY athlete_name")
     ->fetchAll(PDO::FETCH_ASSOC);
 
+// World Triathlon щафетни резултати (Mixed/Team/Youth Relay) споделят
+// event_id с индивидуалния резултат на същия атлет от същото състезание —
+// изглеждат като "дубликат" в списъка (същото заглавие/дата, различно
+// време/позиция). Ръчно потвърдени през WT API-то
+// (GET /events/{event_id}/programs/{prog_id} -> prog_name съдържа "Relay")
+// на 2026-08-12 за всички редове, споделящи event_id с друг ред в базата.
+// Скрити САМО на тази страница по изрична заявка — базата/pipeline-ът не
+// се пипат, затова списъкът е статичен и не хваща автоматично бъдещи
+// щафетни резултати; ще трябва да се допълни ръчно при нужда.
+const RC_RELAY_EVENT_PROG_IDS = [
+    '172513:582613', // Mixed Junior Relay
+    '172516:578766', // Mixed Youth Relay
+    '184418:636400', // Mixed Junior Relay
+    '184421:634061', // Mixed Junior Relay
+    '184435:634346', // Mixed Junior Relay
+    '184438:634474', // Mixed Relay
+    '184704:635548', // Mixed Relay
+    '194266:676125', // Mixed Junior Relay
+    '195201:678246', // Mixed Junior Relay
+];
+
 // Обединен местни+World Triathlon списък с row_id (стабилен ключ за
 // чекбокс/URL селекция) и всички сплитове — извадено във функция, защото
 // сега може да се вика за 2 атлета (основния + избрания за сравнение).
@@ -34,7 +55,8 @@ function rc_fetch_combined_results($pdo, $athlete_name) {
         $stmt = $pdo->prepare("
             SELECT 'local-' || r.id AS row_id, event_date, 'local' AS source,
                    e.name AS event_name,
-                   leg1 AS swim, t1, leg2 AS bike, t2, leg3 AS run, total_time
+                   leg1 AS swim, t1, leg2 AS bike, t2, leg3 AS run, total_time,
+                   NULL AS event_id, NULL AS prog_id
             FROM local_results r JOIN local_events e ON e.event_id = r.event_id
             WHERE r.athlete_name = ? AND r.sport = 'triathlon'
 
@@ -43,14 +65,18 @@ function rc_fetch_combined_results($pdo, $athlete_name) {
             SELECT 'wt-' || id AS row_id, event_date, 'wt' AS source,
                    event_title AS event_name,
                    swim_split AS swim, t1_split AS t1, bike_split AS bike,
-                   t2_split AS t2, run_split AS run, total_time
+                   t2_split AS t2, run_split AS run, total_time,
+                   event_id, prog_id
             FROM world_triathlon_results
             WHERE athlete_name = ?
 
             ORDER BY event_date DESC
         ");
         $stmt->execute([$athlete_name, $athlete_name]);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        return array_values(array_filter($rows, function ($r) {
+            return !in_array($r['event_id'] . ':' . $r['prog_id'], RC_RELAY_EVENT_PROG_IDS, true);
+        }));
     } catch (PDOException $e) {
         return [];
     }
