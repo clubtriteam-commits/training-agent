@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Сравнение на стартове — компактен изглед</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root{
+    --ink:#0b0b0b;--ink-2:#52514e;--muted:#898781;--grid:#e1e0d9;--surface:#fff;
+    --blue:#2a78d6;--aqua:#1baf7a;--accent:#2250e3;
+}
+body{font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:24px;color:var(--ink);}
+.wrap{max-width:1180px;margin:0 auto;}
+
+/* ============ КОМПАКТНАТА КАРТА В DASHBOARD-А ============ */
+.compare-card{background:var(--surface);border-radius:8px;padding:18px 20px;box-shadow:0 2px 8px rgba(0,0,0,.08);max-width:560px;}
+.compare-card h2{margin:0 0 3px;font-size:16px;}
+.compare-card .sub{font-size:12px;color:var(--muted);margin:0 0 14px;}
+.mini-viz{display:flex;align-items:flex-end;gap:3px;height:56px;margin-bottom:12px;padding:0 2px;}
+.mini-viz .bar{flex:1;border-radius:3px 3px 0 0;background:#dfe7f5;position:relative;}
+.mini-viz .bar.local{background:#c8ead9;}
+.mini-viz .bar:hover{opacity:.75;}
+.viz-caption{font-size:11px;color:var(--muted);display:flex;justify-content:space-between;margin-bottom:14px;}
+.stats-row{display:flex;gap:16px;margin-bottom:16px;}
+.stat{flex:1;}
+.stat .s-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);}
+.stat .s-value{font-size:20px;font-weight:700;margin-top:1px;}
+.stat .s-note{font-size:11px;color:var(--muted);}
+.open-btn{display:inline-flex;align-items:center;gap:8px;padding:9px 18px;border-radius:8px;background:var(--accent);color:#fff;font-size:13.5px;font-weight:600;border:none;cursor:pointer;}
+.open-btn:hover{background:#1a3fb8;}
+.open-btn .icon{font-size:15px;}
+
+/* ============ МОДАЛЪТ ============ */
+.modal-overlay{position:fixed;inset:0;background:rgba(11,11,11,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:100;}
+.modal{background:var(--surface);border-radius:12px;max-width:860px;width:100%;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.25);}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 22px;border-bottom:1px solid var(--grid);}
+.modal-head h3{margin:0;font-size:16px;}
+.modal-close{border:none;background:none;font-size:22px;color:var(--muted);cursor:pointer;line-height:1;}
+.modal-body{padding:18px 22px;overflow-y:auto;}
+
+/* стъпка 1: избор */
+.pick-row{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+.pick-select{flex:1;min-width:220px;padding:9px 12px;border:1px solid var(--grid);border-radius:8px;font-size:13px;color:var(--ink);background:#fafbfc;}
+.year-pills{display:flex;gap:6px;margin-bottom:14px;}
+.year-pill{padding:5px 13px;border-radius:13px;font-size:12.5px;border:1px solid var(--grid);background:#fafbfc;color:var(--ink-2);cursor:pointer;}
+.year-pill.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+.hint-line{font-size:12px;color:var(--muted);margin:0 0 8px;}
+
+/* сравнителна зона */
+.vs-grid{display:grid;grid-template-columns:1fr;gap:14px;margin-top:6px;}
+.split-cmp-table{border-collapse:collapse;width:100%;font-size:13px;}
+.split-cmp-table th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:7px 10px;border-bottom:1px solid var(--grid);}
+.split-cmp-table td{padding:8px 10px;border-bottom:1px solid #f0efec;font-variant-numeric:tabular-nums;}
+.split-cmp-table td:first-child{font-weight:600;color:var(--ink-2);}
+.delta-chip{display:inline-block;font-size:11.5px;font-weight:700;padding:1px 7px;border-radius:8px;margin-left:6px;}
+.delta-chip.faster{background:#e5f3e6;color:#1e7d3a;}
+.delta-chip.slower{background:#fbe2e2;color:#b03a3a;}
+.src-mini{display:inline-block;font-size:10px;font-weight:600;padding:1px 6px;border-radius:7px;vertical-align:middle;margin-left:6px;}
+.src-mini.local{background:#e4f4ec;color:#1e7d3a;}
+.src-mini.wt{background:#e8f0fd;color:var(--blue);}
+.chart-zone{height:210px;position:relative;margin-top:4px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ================================================== -->
+<!-- ЧАСТ 1: това стои в dashboard-а — компактна карта  -->
+<!-- ================================================== -->
+<h2 style="font-size:14px;color:#898781;">▼ Как изглежда в athlete.php (компактно, без списък):</h2>
+
+<div class="compare-card">
+    <h2>Сравнение на стартове</h2>
+    <p class="sub">Местни + World Triathlon — сплитове един до друг</p>
+
+    <!-- мини визуализация: timeline на стартовете като вертикални барове -->
+    <div class="mini-viz" title="Хронология на стартовете — височина = общо време">
+        <div class="bar" style="height:62%" title="2023"></div>
+        <div class="bar" style="height:58%"></div>
+        <div class="bar" style="height:70%"></div>
+        <div class="bar" style="height:54%"></div>
+        <div class="bar" style="height:66%"></div>
+        <div class="bar local" style="height:88%" title="ДП (местно)"></div>
+        <div class="bar" style="height:52%"></div>
+        <div class="bar local" style="height:50%"></div>
+        <div class="bar" style="height:57%"></div>
+        <div class="bar" style="height:49%"></div>
+        <div class="bar local" style="height:86%"></div>
+        <div class="bar" style="height:51%"></div>
+    </div>
+    <div class="viz-caption"><span>2023</span><span>18 старта · 4 сезона</span><span>2026</span></div>
+
+    <div class="stats-row">
+        <div class="stat">
+            <div class="s-label">Стартове</div>
+            <div class="s-value">18</div>
+            <div class="s-note">14 WT · 4 местни</div>
+        </div>
+        <div class="stat">
+            <div class="s-label">Последен</div>
+            <div class="s-value" style="font-size:15px;">01.08.2026</div>
+            <div class="s-note">ДП Стандартна</div>
+        </div>
+        <div class="stat">
+            <div class="s-label">Най-бърз спринт</div>
+            <div class="s-value" style="font-size:15px;">1:01:55</div>
+            <div class="s-note">Ohrid 2026</div>
+        </div>
+    </div>
+
+    <button class="open-btn" onclick="document.getElementById('cmpModal').style.display='flex'">
+        <span class="icon">⇄</span> Сравни стартове
+    </button>
+</div>
+
+<!-- ================================================== -->
+<!-- ЧАСТ 2: модалът (отваря се при клик)               -->
+<!-- ================================================== -->
+<div class="modal-overlay" id="cmpModal" style="display:flex;">
+    <div class="modal">
+        <div class="modal-head">
+            <h3>Сравнение на стартове — Мира Георгиева</h3>
+            <button class="modal-close" onclick="document.getElementById('cmpModal').style.display='none'">×</button>
+        </div>
+        <div class="modal-body">
+
+            <div class="year-pills">
+                <button class="year-pill active">2026</button>
+                <button class="year-pill">2025</button>
+                <button class="year-pill">2024</button>
+                <button class="year-pill">2023</button>
+            </div>
+
+            <p class="hint-line">Избери до 3 старта за сравнение — дропдауните показват само избраната година:</p>
+            <div class="pick-row">
+                <select class="pick-select">
+                    <option selected>🌍 13.06 — Balkan Championships Ohrid (1:01:55)</option>
+                    <option>🌍 27.06 — Dev. Regional Cup Gallipoli (1:09:18)</option>
+                    <option>🇧🇬 05.07 — ДП Спринтова дистанция (1:06:07)</option>
+                    <option>🌍 18.07 — Europe Cup Tata (1:07:06)</option>
+                </select>
+                <select class="pick-select">
+                    <option selected>🇧🇬 05.07 — ДП Спринтова дистанция (1:06:07)</option>
+                    <option>🌍 13.06 — Balkan Championships Ohrid (1:01:55)</option>
+                    <option>🌍 18.07 — Europe Cup Tata (1:07:06)</option>
+                </select>
+                <select class="pick-select">
+                    <option selected>+ добави трети…</option>
+                    <option>🌍 18.07 — Europe Cup Tata (1:07:06)</option>
+                </select>
+            </div>
+
+            <!-- сравнителна таблица: дисциплини като редове, стартове като колони -->
+            <table class="split-cmp-table">
+                <thead>
+                    <tr>
+                        <th>Дисциплина</th>
+                        <th>Ohrid <span class="src-mini wt">WT</span></th>
+                        <th>ДП Пловдив <span class="src-mini local">🇧🇬</span></th>
+                        <th>Δ</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>Плуване</td><td>09:40</td><td>10:19</td><td><span class="delta-chip slower">+0:39</span></td></tr>
+                    <tr><td>Т1</td><td>0:44</td><td>0:16</td><td><span class="delta-chip faster">−0:28</span></td></tr>
+                    <tr><td>Колоездене</td><td>32:29</td><td>35:16</td><td><span class="delta-chip slower">+2:47</span></td></tr>
+                    <tr><td>Т2</td><td>0:21</td><td>0:18</td><td><span class="delta-chip faster">−0:03</span></td></tr>
+                    <tr><td>Бягане</td><td>18:41</td><td>19:55</td><td><span class="delta-chip slower">+1:14</span></td></tr>
+                    <tr style="font-weight:700;"><td>Общо</td><td>1:01:55</td><td>1:06:07</td><td><span class="delta-chip slower">+4:12</span></td></tr>
+                </tbody>
+            </table>
+
+            <!-- визуално: груп. бар чарт на сплитовете -->
+            <div class="chart-zone"><canvas id="cmpChart"></canvas></div>
+
+        </div>
+    </div>
+</div>
+
+</div>
+<script>
+Chart.defaults.font.family='Arial, sans-serif';
+Chart.defaults.color='#898781';
+Chart.defaults.animation=false;
+
+new Chart(document.getElementById('cmpChart'),{
+    type:'bar',
+    data:{
+        labels:['Плуване','Колоездене','Бягане'],
+        datasets:[
+            {label:'Ohrid (WT)',data:[580,1949,1121],backgroundColor:'#2a78d6',borderRadius:4},
+            {label:'ДП Пловдив (местно)',data:[619,2116,1195],backgroundColor:'#1baf7a',borderRadius:4}
+        ]
+    },
+    options:{
+        responsive:true,maintainAspectRatio:false,
+        plugins:{
+            legend:{position:'bottom',labels:{boxWidth:11,boxHeight:11,font:{size:11}}},
+            tooltip:{callbacks:{label:ctx=>{
+                const s=ctx.raw;const m=Math.floor(s/60);const sec=String(s%60).padStart(2,'0');
+                return ctx.dataset.label+': '+m+':'+sec;
+            }}}
+        },
+        scales:{
+            y:{ticks:{callback:v=>Math.floor(v/60)+' мин'},grid:{color:'#e1e0d9'}},
+            x:{grid:{display:false}}
+        }
+    }
+});
+</script>
+</body>
+</html>

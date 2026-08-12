@@ -12,6 +12,7 @@ require_once 'includes/db.php';
 require_once 'includes/metrics_glossary.php';
 require_once 'includes/lactate_zones.php';
 require_once 'includes/nat_tests.php';
+require_once 'includes/wt_event_meta.php';
 require_login();
 
 $pdo = get_db_connection();
@@ -135,31 +136,95 @@ $local_result_years = array_values(array_unique(array_map(
 )));
 $local_default_year = $local_result_years[0] ?? null;
 
-// Обединена хронология (местни + World Triathlon) — списък по дата
-// независимо откъде идва състезанието. Само триатлон: дуатлон/акватлон
-// местните резултати нямат плуване/колело/бягане в тези колони.
-// Само обзорни колони тук — сплитовете и сравнението между стартове
-// живеят на отделна страница, results_comparison.php (виж бутона по-долу),
-// за да не заема "Обединена хронология" половината дашборд.
+// Обединена хронология (местни + World Triathlon), възходящо по дата —
+// подава компактната карта по-долу (мини bar-timeline + 3 stat-a). Пълният
+// избираем списък и сравнението между стартове живеят на отделна страница,
+// results_comparison.php, затова тук няма таблица, само обзорните данни за
+// картата. Само триатлон: дуатлон/акватлон местните резултати нямат
+// плуване/колело/бягане в тези колони. Щафетите се изключват със същия
+// wt_is_relay() филтър като results_comparison.php (includes/wt_event_meta.php),
+// за да съвпада броят "Стартове" тук с броя записи там.
 $combined_results = [];
 try {
     $stmt = $pdo->prepare("
-        SELECT event_date, 'local' AS source, e.name AS event_name, total_time
+        SELECT event_date, 'local' AS source, e.name AS event_name, total_time,
+               NULL AS event_id, NULL AS prog_id
         FROM local_results r JOIN local_events e ON e.event_id = r.event_id
         WHERE r.athlete_name = ? AND r.sport = 'triathlon'
 
         UNION ALL
 
-        SELECT event_date, 'wt' AS source, event_title AS event_name, total_time
+        SELECT event_date, 'wt' AS source, event_title AS event_name, total_time,
+               event_id, prog_id
         FROM world_triathlon_results
         WHERE athlete_name = ?
 
-        ORDER BY event_date DESC
+        ORDER BY event_date ASC
     ");
     $stmt->execute([$athlete_name, $athlete_name]);
-    $combined_results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $combined_results = array_values(array_filter($rows, function ($r) {
+        return !wt_is_relay($r['event_id'], $r['prog_id']);
+    }));
 } catch (PDOException $e) {
     $combined_results = [];
+}
+
+// "0:10:19" / "1:06:07" -> секунди, за сортиране по скорост и за скалиране
+// на мини bar-timeline-а.
+function cc_time_to_seconds($str) {
+    if ($str === null || $str === '') return null;
+    $parts = explode(':', $str);
+    foreach ($parts as $p) {
+        if ($p === '' || !is_numeric($p)) return null;
+    }
+    $seconds = 0;
+    $mult = 1;
+    for ($i = count($parts) - 1; $i >= 0; $i--) {
+        $seconds += (int)$parts[$i] * $mult;
+        $mult *= 60;
+    }
+    return $seconds;
+}
+
+$cc_count = count($combined_results);
+$cc_wt_count = count(array_filter($combined_results, fn($r) => $r['source'] === 'wt'));
+$cc_local_count = $cc_count - $cc_wt_count;
+$cc_last = $cc_count ? $combined_results[$cc_count - 1] : null; // ASC -> последният елемент е най-новият старт
+$cc_years = array_values(array_unique(array_map(fn($r) => substr($r['event_date'], 0, 4), $combined_results)));
+sort($cc_years);
+$cc_year_first = $cc_years[0] ?? null;
+$cc_year_last = $cc_years[count($cc_years) - 1] ?? null;
+
+// "Най-бърз спринт" през двата източника: местни резултати с "спринт" в
+// името на състезанието (WT не различава дистанция в заглавието), WT
+// резултати през WT_EVENT_DISTANCE — само точно "Sprint", НЕ "Super Sprint"
+// (различна, по-къса дистанция — не се сравняват като едно и също).
+$cc_sprint_results = array_values(array_filter($combined_results, function ($r) {
+    if ($r['source'] === 'local') {
+        return mb_stripos($r['event_name'] ?? '', 'спринт') !== false;
+    }
+    return (WT_EVENT_DISTANCE[(int)$r['event_id']] ?? null) === 'Sprint';
+}));
+$cc_fastest_sprint = null;
+$cc_fastest_sprint_secs = null;
+foreach ($cc_sprint_results as $r) {
+    $secs = cc_time_to_seconds($r['total_time']);
+    if ($secs === null) continue;
+    if ($cc_fastest_sprint_secs === null || $secs < $cc_fastest_sprint_secs) {
+        $cc_fastest_sprint = $r;
+        $cc_fastest_sprint_secs = $secs;
+    }
+}
+
+// Скала за bar-height-а на мини timeline-а (25%-100% от карт. височина).
+$cc_all_secs = array_filter(array_map(fn($r) => cc_time_to_seconds($r['total_time']), $combined_results), fn($s) => $s !== null);
+$cc_min_secs = $cc_all_secs ? min($cc_all_secs) : 0;
+$cc_max_secs = $cc_all_secs ? max($cc_all_secs) : 1;
+$cc_secs_range = max($cc_max_secs - $cc_min_secs, 1);
+function cc_bar_height_pct($secs, $min_secs, $range) {
+    if ($secs === null) return 20;
+    return 25 + 75 * (($secs - $min_secs) / $range);
 }
 
 // HR/power zone разбивка по активност (main.py's ежедневен "zones" step,
@@ -686,12 +751,26 @@ $alert_type_labels = [
         .source-badge { display: inline-block; padding: 3px 10px; border-radius: 8px; font-weight: 600; font-size: 12px; }
         .source-badge.source-wt    { background: #eef1fb; color: #2250e3; }
         .source-badge.source-local { background: #e8f5ec; color: #1f7a3d; }
-        /* Заглавен ред с бутон встрани, за секции с линк към отделна страница
-           (напр. "Обединена хронология" -> results_comparison.php). */
-        .section-head-row { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-        .section-head-row h2 { margin: 0; }
-        .section-link-btn { display: inline-block; padding: 4px 12px; border-radius: 12px; background: #eef1fb; color: #2250e3; font-size: 12px; font-weight: 600; white-space: nowrap; }
-        .section-link-btn:hover { background: #2250e3; color: #ffffff; }
+        /* Компактна карта вместо пълния списък под "Обединена хронология" —
+           мини bar-timeline + 3 stat-а + линк към results_comparison.php.
+           Височина на цялата .compare-card е нарочно стегната (padding/margin
+           по-тесни от типичното other table-card съдържание) да остане ≤250px. */
+        .compare-card { padding: 4px 0 0; }
+        .compare-card h2 { margin: 0 0 3px; font-size: 16px; }
+        .compare-card .cc-sub { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+        .cc-viz { display: flex; align-items: flex-end; gap: 3px; height: 46px; margin-bottom: 6px; padding: 0 2px; }
+        .cc-viz .cc-bar { flex: 1; max-width: 14px; border-radius: 3px 3px 0 0; background: var(--series-1); opacity: 0.55; }
+        .cc-viz .cc-bar.local { background: var(--series-2); opacity: 0.65; }
+        .cc-viz .cc-bar:hover { opacity: 1; }
+        .cc-caption { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; margin-bottom: 9px; }
+        .cc-stats { display: flex; gap: 16px; margin-bottom: 10px; }
+        .cc-stat { flex: 1; min-width: 0; }
+        .cc-stat .cc-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+        .cc-stat .cc-value { font-size: 19px; font-weight: 700; margin-top: 1px; }
+        .cc-stat .cc-value.cc-value--sm { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .cc-stat .cc-note { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .cc-open-btn { display: inline-flex; align-items: center; gap: 7px; padding: 7px 16px; border-radius: 8px; background: #2250e3; color: #fff; font-size: 13px; font-weight: 600; }
+        .cc-open-btn:hover { background: #1a3fb8; color: #fff; }
         .result-detail td { background: transparent; padding: 0 0 14px; }
         .split-panel { background: #fafbff; border: 1px solid #e4e8f7; border-left: 3px solid #2250e3; border-radius: 10px; padding: 14px 18px; }
         .splits-grid { display: grid; grid-template-columns: repeat(5, minmax(90px, 1fr)); gap: 12px 18px; }
@@ -1195,38 +1274,49 @@ $alert_type_labels = [
         <?php endif; ?>
     </div>
 
-    <div class="table-card" style="margin-top:20px;">
-        <div class="section-head-row">
-            <h2>Обединена хронология</h2>
-            <?php if ($combined_results): ?>
-            <a class="section-link-btn" href="results_comparison.php?id=<?= urlencode($athlete_id) ?>">📊 Сравнение на стартове</a>
+    <div class="table-card" style="margin-top:20px; padding:14px 18px;">
+        <div class="compare-card">
+            <h2>Сравнение на стартове</h2>
+            <p class="cc-sub">Местни + World Triathlon — сплитове един до друг</p>
+            <?php if ($cc_count): ?>
+            <div class="cc-viz" title="Хронология на стартовете — височина = общо време">
+                <?php foreach ($combined_results as $r):
+                    $secs = cc_time_to_seconds($r['total_time']);
+                    $height = cc_bar_height_pct($secs, $cc_min_secs, $cc_secs_range);
+                    $bar_title = $r['event_date'] . ($r['event_name'] ? ' — ' . $r['event_name'] : '') . ($r['total_time'] ? ' (' . $r['total_time'] . ')' : '');
+                ?>
+                <div class="cc-bar<?= $r['source'] === 'local' ? ' local' : '' ?>" style="height:<?= round($height, 1) ?>%" title="<?= htmlspecialchars($bar_title) ?>"></div>
+                <?php endforeach; ?>
+            </div>
+            <div class="cc-caption">
+                <span><?= htmlspecialchars($cc_year_first ?? '') ?></span>
+                <span><?= $cc_count ?> <?= $cc_count === 1 ? 'старт' : 'старта' ?> · <?= count($cc_years) ?> <?= count($cc_years) === 1 ? 'сезон' : 'сезона' ?></span>
+                <span><?= htmlspecialchars($cc_year_last ?? '') ?></span>
+            </div>
+            <div class="cc-stats">
+                <div class="cc-stat">
+                    <div class="cc-label">Стартове</div>
+                    <div class="cc-value"><?= $cc_count ?></div>
+                    <div class="cc-note"><?= $cc_wt_count ?> WT · <?= $cc_local_count ?> местни</div>
+                </div>
+                <div class="cc-stat">
+                    <div class="cc-label">Последен</div>
+                    <div class="cc-value cc-value--sm"><?= $cc_last ? htmlspecialchars($cc_last['event_date']) : '—' ?></div>
+                    <div class="cc-note"><?= $cc_last ? htmlspecialchars(($cc_last['event_name']) !== null && ($cc_last['event_name']) !== "" ? ($cc_last['event_name']) : "—") : '' ?></div>
+                </div>
+                <div class="cc-stat">
+                    <div class="cc-label">Най-бърз спринт</div>
+                    <div class="cc-value cc-value--sm"><?= $cc_fastest_sprint ? htmlspecialchars($cc_fastest_sprint['total_time']) : '—' ?></div>
+                    <div class="cc-note"><?= $cc_fastest_sprint ? htmlspecialchars(($cc_fastest_sprint['event_name']) !== null && ($cc_fastest_sprint['event_name']) !== "" ? ($cc_fastest_sprint['event_name']) : "—") : 'няма спринт старт' ?></div>
+                </div>
+            </div>
+            <a class="cc-open-btn" href="results_comparison.php?id=<?= urlencode($athlete_id) ?>">
+                <span>⇄</span> Сравни стартове
+            </a>
+            <?php else: ?>
+            <p class="empty">Няма данни</p>
             <?php endif; ?>
         </div>
-        <?php if ($combined_results): ?>
-        <table id="combined-results-table">
-            <thead>
-                <tr>
-                    <th>Дата</th><th>Състезание</th><th>Източник</th><th>Общо</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ($combined_results as $r): ?>
-                <tr>
-                    <td class="event-date"><?= htmlspecialchars($r['event_date']) ?></td>
-                    <td class="event-name"><?= $r['event_name'] !== null && $r['event_name'] !== '' ? htmlspecialchars($r['event_name']) : '—' ?></td>
-                    <td>
-                        <span class="source-badge source-<?= htmlspecialchars($r['source']) ?>">
-                            <?= $r['source'] === 'wt' ? 'Официално' : 'Местно' ?>
-                        </span>
-                    </td>
-                    <td class="total-time"><?= $r['total_time'] !== null && $r['total_time'] !== '' ? htmlspecialchars($r['total_time']) : '—' ?></td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-        <?php else: ?>
-            <p class="empty">Няма данни</p>
-        <?php endif; ?>
     </div>
 
     <div class="table-card" style="margin-top:20px;">
