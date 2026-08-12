@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from storage.db import (init_db, save_world_triathlon_ranking,
                         upsert_world_triathlon_result, count_world_triathlon_results,
-                        get_results_needing_positions, save_result_positions)
+                        get_results_needing_positions, save_result_positions,
+                        get_results_needing_conditions, save_result_conditions)
 from alerts.notifier_telegram import send_telegram_message
 
 # git не следи празни директории — logs/ може да липсва след .gitignore
@@ -116,15 +117,30 @@ def parse_time_to_seconds(value):
 
 
 def get_event_program_results(event_id, prog_id):
-    """Всички участници (с техните splits) в дадена програма на събитие."""
+    """Всички участници (с техните splits) и условията на състезанието
+    ('meta': темп. вода/въздух, wetsuit, ...) в дадена програма на събитие —
+    едно и също API извикване дава и двете, viz. compute_missing_result_metadata().
+    """
     url = f"{BASE_URL}/events/{event_id}/programs/{prog_id}/results"
     response = requests.get(url, headers=get_headers())
     if response.status_code != 200:
-        return response.status_code, []
+        return response.status_code, [], {}
     data = response.json().get('data') or {}
     # Резултатите са в data.results; защита, ако data е директно масив
     participants = data.get('results') if isinstance(data, dict) else data
-    return 200, participants or []
+    meta = data.get('meta') if isinstance(data, dict) else {}
+    return 200, participants or [], meta or {}
+
+
+def parse_conditions(meta):
+    """Условията на състезанието от event results 'meta' — вода/въздух
+    температура (°C, API-то ги връща като низове тип "19.0"), wetsuit
+    статус, влажност/вятър/време/drafting правило. Всички опционални —
+    по-стари/по-малки състезания често нямат тези данни (null).
+    """
+    keys = ('temperature_water', 'temperature_air', 'humidity', 'wbgt',
+            'wind', 'weather', 'wetsuit', 'drafting')
+    return {k: (str(meta[k]) if meta.get(k) is not None else None) for k in keys}
 
 
 def is_ranked(participant):
@@ -171,29 +187,52 @@ def compute_split_positions(participants, our_athlete_id):
     return positions
 
 
-def compute_missing_split_positions():
-    """Изчислява per-split позиции за резултатите, които нямат такива.
+def compute_missing_result_metadata():
+    """Изчислява per-split позиции И условията на състезанието (темп.
+    вода/въздух, wetsuit, ...) за резултатите, на които им липсва едното
+    или другото — обединено в една опашка по (event_id, prog_id), защото
+    и двете идват от СЪЩИЯ event results endpoint (виж
+    get_event_program_results()). Нов резултат винаги чака и двете, затова
+    обединяването пести наполовина API заявките спрямо две отделни
+    опашки; резултат, чиито позиции вече са изчислени преди условията да
+    съществуват като функционалност, минава пак само за backfill-а им.
 
-    Rate limit защити: event results endpoint-ът се вика само за
-    необработени резултати (positions_computed_at IS NULL), веднъж на
-    (event, prog) двойка в рамките на пускане (двама наши атлети в едно
-    състезание = една заявка), с пауза между заявките и таван на брой
-    заявки за пускане.
+    Rate limit защити: event results endpoint-ът се вика веднъж на
+    (event, prog) двойка в рамките на пускане, с пауза между заявките и
+    таван на брой заявки за пускане.
     """
-    pending = get_results_needing_positions()
+    pending = {}
+    for row in get_results_needing_positions():
+        key = (row['athlete_id'], row['event_id'], row['prog_id'])
+        pending.setdefault(key, {'row': row, 'positions': False, 'conditions': False})
+        pending[key]['positions'] = True
+    for row in get_results_needing_conditions():
+        key = (row['athlete_id'], row['event_id'], row['prog_id'])
+        pending.setdefault(key, {'row': row, 'positions': False, 'conditions': False})
+        pending[key]['conditions'] = True
+
     if not pending:
-        print("Per-split позиции: няма необработени резултати")
+        print("Позиции/условия: няма необработени резултати")
         return
 
+    # ORDER BY event_date DESC от двете заявки се губи при merge-а в dict
+    # по-горе — пресортираме, за да продължим да обработваме най-новите
+    # резултати първи (най-вероятно интересни на коуча).
+    items = sorted(pending.values(), key=lambda p: p['row']['event_date'] or '', reverse=True)
+
     cache = {}
-    fetches = computed = skipped = 0
-    for row in pending:
+    fetches = computed_positions = computed_conditions = skipped = 0
+    for item in items:
+        row = item['row']
         event_id, prog_id = row['event_id'], row['prog_id']
 
         # Без prog_id не можем да построим event URL — маркираме като
         # обработен, иначе ще опитваме до безкрай.
         if not prog_id:
-            save_result_positions(row['athlete_id'], event_id, prog_id, {})
+            if item['positions']:
+                save_result_positions(row['athlete_id'], event_id, prog_id, {})
+            if item['conditions']:
+                save_result_conditions(row['athlete_id'], event_id, prog_id, {})
             skipped += 1
             continue
 
@@ -203,25 +242,29 @@ def compute_missing_split_positions():
                 print(f"  Достигнат лимит от {MAX_EVENT_FETCHES_PER_RUN} event "
                       f"заявки — остатъкът при следващото пускане")
                 break
-            status, participants = get_event_program_results(event_id, prog_id)
+            status, participants, meta = get_event_program_results(event_id, prog_id)
             fetches += 1
             time.sleep(EVENT_FETCH_PAUSE_SECS)
             if status != 200:
                 print(f"  ⚠️ Event {event_id}/prog {prog_id}: HTTP {status}")
-                cache[key] = None
+                cache[key] = (None, None)
             else:
-                cache[key] = participants
+                cache[key] = (participants, meta)
 
-        participants = cache[key]
+        participants, meta = cache[key]
         if participants is None:
             continue  # неуспешна заявка — без маркер, retry следващия път
 
-        positions = compute_split_positions(participants, row['athlete_id'])
-        save_result_positions(row['athlete_id'], event_id, prog_id, positions)
-        computed += 1
+        if item['positions']:
+            positions = compute_split_positions(participants, row['athlete_id'])
+            save_result_positions(row['athlete_id'], event_id, prog_id, positions)
+            computed_positions += 1
+        if item['conditions']:
+            save_result_conditions(row['athlete_id'], event_id, prog_id, parse_conditions(meta))
+            computed_conditions += 1
 
-    print(f"Per-split позиции: {computed} изчислени, {skipped} без prog_id, "
-          f"{fetches} event заявки")
+    print(f"Позиции: {computed_positions} изчислени · Условия: {computed_conditions} изчислени · "
+          f"{skipped} без prog_id · {fetches} event заявки")
 
 
 def build_new_result_message(athlete_name, event_title, event_date,
@@ -325,4 +368,4 @@ if __name__ == '__main__':
     init_db()  # гарантира, че world_triathlon_results съществува (IF NOT EXISTS)
     fetch_and_save_rankings()
     fetch_and_save_results()
-    compute_missing_split_positions()
+    compute_missing_result_metadata()

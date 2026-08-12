@@ -106,6 +106,12 @@ def init_db():
     # *_position колоните са TEXT заради формата за равни времена ("=3").
     # positions_computed_at маркира, че event results endpoint-ът е викан
     # за този резултат (дори когато не е дал позиции) — за rate limits.
+    # temperature_water/temperature_air/wetsuit/... идват от 'meta' обекта
+    # на СЪЩИЯ event results endpoint (виж parse_conditions() във
+    # fetch_world_triathlon.py) — не е нова API заявка, само поле, което
+    # преди се е игнорирало. conditions_computed_at е отделен маркер от
+    # positions_computed_at нарочно: позволява backfill на условията и за
+    # резултати, чиито позиции вече са изчислени отдавна.
     cur.execute('''
         CREATE TABLE IF NOT EXISTS world_triathlon_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,6 +135,15 @@ def init_db():
             t2_position TEXT,
             run_position TEXT,
             positions_computed_at TEXT,
+            temperature_water TEXT,
+            temperature_air TEXT,
+            humidity TEXT,
+            wbgt TEXT,
+            wind TEXT,
+            weather TEXT,
+            wetsuit TEXT,
+            drafting TEXT,
+            conditions_computed_at TEXT,
             fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(athlete_id, event_id, prog_id)
         )
@@ -275,7 +290,9 @@ def init_db():
     existing_cols = {row[1] for row in cur.fetchall()}
     for col in ('swim_split', 't1_split', 'bike_split', 't2_split', 'run_split',
                 'swim_position', 't1_position', 'bike_position', 't2_position',
-                'run_position', 'positions_computed_at'):
+                'run_position', 'positions_computed_at',
+                'temperature_water', 'temperature_air', 'humidity', 'wbgt',
+                'wind', 'weather', 'wetsuit', 'drafting', 'conditions_computed_at'):
         if col not in existing_cols:
             cur.execute(f"ALTER TABLE world_triathlon_results ADD COLUMN {col} TEXT")
 
@@ -451,6 +468,49 @@ def save_result_positions(athlete_id, event_id, prog_id, positions):
     ''', (positions.get('swim_position'), positions.get('t1_position'),
           positions.get('bike_position'), positions.get('t2_position'),
           positions.get('run_position'), athlete_id, event_id, prog_id))
+    conn.commit()
+    conn.close()
+
+
+def get_results_needing_conditions():
+    """Резултати, за които условията на състезанието (темп. вода/въздух,
+    wetsuit, ...) още не са изтеглени от event results endpoint-а.
+
+    Отделен маркер от positions_computed_at нарочно: резултати, чиито
+    позиции вече са изчислени преди тази функционалност да съществува,
+    все пак трябва да минат веднъж за backfill на условията.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        SELECT athlete_id, athlete_name, event_id, prog_id
+        FROM world_triathlon_results
+        WHERE conditions_computed_at IS NULL
+        ORDER BY event_date DESC
+    ''')
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def save_result_conditions(athlete_id, event_id, prog_id, conditions):
+    """Записва условията на състезанието и маркира резултата като обработен.
+
+    conditions може да е празен dict (по-старо/по-малко събитие без тези
+    данни в API-то) — пак маркираме, за да не повтаряме заявката.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        UPDATE world_triathlon_results
+        SET temperature_water = ?, temperature_air = ?, humidity = ?,
+            wbgt = ?, wind = ?, weather = ?, wetsuit = ?, drafting = ?,
+            conditions_computed_at = CURRENT_TIMESTAMP
+        WHERE athlete_id = ? AND event_id = ? AND prog_id = ?
+    ''', (conditions.get('temperature_water'), conditions.get('temperature_air'),
+          conditions.get('humidity'), conditions.get('wbgt'), conditions.get('wind'),
+          conditions.get('weather'), conditions.get('wetsuit'), conditions.get('drafting'),
+          athlete_id, event_id, prog_id))
     conn.commit()
     conn.close()
 

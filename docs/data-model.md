@@ -109,10 +109,12 @@ Pre-dates `alert_events` (see [ADR 0002](adr/0002-two-phase-detection-delivery.m
 | `swim_split` … `run_split` | TEXT | `"H:MM:SS"` format, nullable |
 | `swim_position` … `run_position` | TEXT | Per-discipline rank, computed **locally** (not provided by the API) — see `compute_split_positions()`. TEXT because ties render as `"=3"`. |
 | `positions_computed_at` | TEXT, nullable | Marks whether the (rate-limited) per-split position computation has run for this result yet |
+| `temperature_water`, `temperature_air`, `humidity`, `wbgt`, `wind`, `weather`, `wetsuit`, `drafting` | TEXT, nullable | Race-day conditions, from the SAME event-results endpoint's `meta` object used for split positions (no extra API call) — see `parse_conditions()`. Often `null` for smaller/older events; the API returns numeric fields (e.g. `temperature_water`) as strings already. |
+| `conditions_computed_at` | TEXT, nullable | Separate marker from `positions_computed_at` on purpose — lets conditions backfill for results whose positions were already computed before this column existed |
 
 **Unique constraint:** `(athlete_id, event_id, prog_id)`.
-**Update frequency:** weekly (Monday 10:00, alongside rankings). Per-split positions computed incrementally, capped at 40 event API calls/run to respect rate limits (see [scaling.md](scaling.md)).
-**Written by:** `fetch_world_triathlon.py:fetch_and_save_results()`, `save_result_positions()`.
+**Update frequency:** weekly (Monday 10:00, alongside rankings). Per-split positions and race-day conditions computed incrementally together (one event-results API call serves both), capped at 40 event API calls/run to respect rate limits (see [scaling.md](scaling.md)).
+**Written by:** `fetch_world_triathlon.py:fetch_and_save_results()`, `save_result_positions()`, `save_result_conditions()`.
 **Read by:** `athlete.php` (results table with expandable splits).
 
 ### `seen_activities` — dedup ledger for activity-based checks

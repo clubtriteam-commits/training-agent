@@ -48,7 +48,7 @@ Runs once per athlete in `config/athletes.yaml`, in order. A failure fetching on
 
 ## World Triathlon sync: `fetch_world_triathlon.py`
 
-**Current cron schedule: Monday 10:00, 12:00, and 18:00** — three times, same script, same day. This spacing exists to catch same-day ranking/result publication delays around race weekends without polling continuously; there's no code-level reason it has to be exactly these three times. Each run does rankings, then full results, then the rate-limited per-split-position backfill (capped at 40 event API calls/run — see [scaling.md](scaling.md)).
+**Current cron schedule: Monday 10:00, 12:00, and 18:00** — three times, same script, same day. This spacing exists to catch same-day ranking/result publication delays around race weekends without polling continuously; there's no code-level reason it has to be exactly these three times. Each run does rankings, then full results, then the rate-limited backfill of per-split positions AND race-day conditions (temperature/wetsuit/etc.) together — one event-results API call serves both, capped at 40 event API calls/run (see [scaling.md](scaling.md)).
 
 ## Lactate Sheet sync: `fetch_lab_data.py`
 
