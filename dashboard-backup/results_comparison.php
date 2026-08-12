@@ -140,7 +140,7 @@ function rc_cell($value) {
     <div class="table-card">
         <h2>Всички стартове</h2>
         <?php if ($combined_results): ?>
-        <p class="hint">Изберете един или повече старта, за да сравните сплитовете им.</p>
+        <p class="hint">Изберете един или повече старта, за да сравните сплитовете им — изборът се пази и при смяна на година, така че можете да сравнявате между различни години.</p>
         <nav class="year-nav" aria-label="Филтър по година">
             <?php foreach ($result_years as $year): ?>
                 <button type="button" data-year="<?= htmlspecialchars($year) ?>"
@@ -275,10 +275,10 @@ function rc_cell($value) {
 
         checkboxes.forEach(cb => cb.addEventListener('change', render));
 
-        // Филтър по година — същия патърн като .year-nav в athlete.php
-        // ("Резултати по година"/"Местни състезания"): смяната на година
-        // скрива редовете от другите години И изчиства избора за сравнение,
-        // за да не остане "невидим" избран старт от скрита година.
+        // Филтър по година — визуално стеснява списъка до една година наведнъж,
+        // но НЕ пипа кои чекбоксове са отметнати: избор от 2026 остава
+        // избран (и участва в таблицата за сравнение долу), докато прелистваш
+        // към 2025 да добавиш втори старт — сравнението е между-годишно.
         const nav = document.querySelector('.year-nav');
         if (nav) {
             const yearButtons = nav.querySelectorAll('button');
@@ -289,8 +289,6 @@ function rc_cell($value) {
                 const year = btn.dataset.year;
                 yearButtons.forEach(b => b.classList.toggle('active', b === btn));
                 rows.forEach(r => { r.style.display = r.dataset.year === year ? '' : 'none'; });
-                checkboxes.forEach(cb => { cb.checked = false; });
-                render();
             });
         }
     }());
