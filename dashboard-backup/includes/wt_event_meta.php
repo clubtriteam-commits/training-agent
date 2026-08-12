@@ -63,3 +63,17 @@ const WT_EVENT_DISTANCE = [
     195396 => 'Sprint',
     195430 => 'Sprint',
 ];
+
+// WT API-то връща wetsuit статуса на race-а като кратка дума
+// ('allowed'/'forbidden'/'mandatory' наблюдавани досега, от event results
+// endpoint-ът 'meta' — виж fetch_world_triathlon.py:parse_conditions()).
+// Превежда познатите, за непознати пази суровата стойност вместо да я
+// скрие мълчаливо.
+function wetsuit_label($value) {
+    $labels = [
+        'allowed'   => 'Wetsuit позволен',
+        'forbidden' => 'Без wetsuit',
+        'mandatory' => 'Wetsuit задължителен',
+    ];
+    return $labels[$value] ?? ('Wetsuit: ' . $value);
+}

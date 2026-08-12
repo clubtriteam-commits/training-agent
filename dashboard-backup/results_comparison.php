@@ -36,7 +36,8 @@ function rc_fetch_combined_results($pdo, $athlete_name) {
             SELECT 'local-' || r.id AS row_id, event_date, 'local' AS source,
                    e.name AS event_name,
                    leg1 AS swim, t1, leg2 AS bike, t2, leg3 AS run, total_time,
-                   NULL AS event_id, NULL AS prog_id
+                   NULL AS event_id, NULL AS prog_id,
+                   NULL AS temperature_water, NULL AS temperature_air, NULL AS wetsuit
             FROM local_results r JOIN local_events e ON e.event_id = r.event_id
             WHERE r.athlete_name = ? AND r.sport = 'triathlon'
 
@@ -46,7 +47,8 @@ function rc_fetch_combined_results($pdo, $athlete_name) {
                    event_title AS event_name,
                    swim_split AS swim, t1_split AS t1, bike_split AS bike,
                    t2_split AS t2, run_split AS run, total_time,
-                   event_id, prog_id
+                   event_id, prog_id,
+                   temperature_water, temperature_air, wetsuit
             FROM world_triathlon_results
             WHERE athlete_name = ?
 
@@ -168,6 +170,9 @@ $compare_metrics = [
     ['athlete_name', 'Атлет', false],
     ['event_name', 'Състезание', false],
     ['source', 'Източник', false],
+    ['temperature_water', 'Вода', false],
+    ['temperature_air', 'Въздух', false],
+    ['wetsuit', 'Wetsuit', false],
     ['swim', 'Плуване', true],
     ['t1', 'T1', true],
     ['bike', 'Колело', true],
@@ -175,6 +180,23 @@ $compare_metrics = [
     ['run', 'Бягане', true],
     ['total_time', 'Общо', true],
 ];
+
+// Условията (temperature_water/temperature_air/wetsuit) идват само за WT
+// резултати (местните нямат ги в API-то изобщо) и се нуждаят от друго
+// форматиране (°C суфикс / wetsuit_label()) от обикновените текстови
+// клетки, затова отделна функция вместо да расте ternary-веригата inline.
+function rc_metric_cell($key, $r) {
+    if ($key === 'source') {
+        return htmlspecialchars($r['source'] === 'wt' ? 'Официално' : 'Местно');
+    }
+    if ($key === 'temperature_water' || $key === 'temperature_air') {
+        return ($r[$key] !== null && $r[$key] !== '') ? htmlspecialchars($r[$key]) . '°C' : '—';
+    }
+    if ($key === 'wetsuit') {
+        return ($r[$key] !== null && $r[$key] !== '') ? htmlspecialchars(wetsuit_label($r[$key])) : '—';
+    }
+    return rc_cell($r[$key]);
+}
 $show_delta = count($selected_results) >= 2;
 $first_selected = $selected_results[0] ?? null;
 $last_selected = $selected_results[count($selected_results) - 1] ?? null;
@@ -292,6 +314,9 @@ $last_selected = $selected_results[count($selected_results) - 1] ?? null;
                     data-athlete="<?= htmlspecialchars($card['athlete_name']) ?>"
                     data-name="<?= htmlspecialchars($r['event_name'] ?? '') ?>"
                     data-source="<?= htmlspecialchars($r['source'] === 'wt' ? 'Официално' : 'Местно') ?>"
+                    data-water="<?= htmlspecialchars($r['temperature_water'] ?? '') ?>"
+                    data-air="<?= htmlspecialchars($r['temperature_air'] ?? '') ?>"
+                    data-wetsuit="<?= htmlspecialchars($r['wetsuit'] !== null && $r['wetsuit'] !== '' ? wetsuit_label($r['wetsuit']) : '') ?>"
                     data-swim="<?= htmlspecialchars($r['swim'] ?? '') ?>"
                     data-t1="<?= htmlspecialchars($r['t1'] ?? '') ?>"
                     data-bike="<?= htmlspecialchars($r['bike'] ?? '') ?>"
@@ -335,7 +360,7 @@ $last_selected = $selected_results[count($selected_results) - 1] ?? null;
                     <tr>
                         <td><?= htmlspecialchars($label) ?></td>
                         <?php foreach ($selected_results as $r): ?>
-                        <td><?= $key === 'source' ? htmlspecialchars($r['source'] === 'wt' ? 'Официално' : 'Местно') : rc_cell($r[$key]) ?></td>
+                        <td><?= rc_metric_cell($key, $r) ?></td>
                         <?php endforeach; ?>
                         <?php if ($show_delta):
                             $d = rc_delta_cell($first_selected[$key] ?? null, $last_selected[$key] ?? null, $is_time);
@@ -361,12 +386,15 @@ $last_selected = $selected_results[count($selected_results) - 1] ?? null;
         // [dataset ключ, етикет, дали е time стойност (участва в Δ)]
         const METRICS = [
             ['athlete', 'Атлет', false], ['name', 'Състезание', false], ['source', 'Източник', false],
+            ['water', 'Вода', false], ['air', 'Въздух', false], ['wetsuit', 'Wetsuit', false],
             ['swim', 'Плуване', true], ['t1', 'T1', true], ['bike', 'Колело', true],
             ['t2', 'T2', true], ['run', 'Бягане', true], ['total', 'Общо', true],
         ];
+        const TEMPERATURE_KEYS = new Set(['water', 'air']);
 
-        function cell(value) {
-            return value && value !== '' ? value : '—';
+        function cell(value, key) {
+            if (!value || value === '') return '—';
+            return TEMPERATURE_KEYS.has(key) ? value + '°C' : value;
         }
 
         // "0:10:19" / "1:06:07" -> секунди, огледално на rc_time_to_seconds() в PHP.
@@ -421,7 +449,7 @@ $last_selected = $selected_results[count($selected_results) - 1] ?? null;
                     (showDelta ? '<th class="delta-col">Δ</th>' : '');
 
                 body.innerHTML = METRICS.map(([key, label, isTime]) => {
-                    const cells = rows.map(r => `<td>${cell(r.dataset[key])}</td>`).join('');
+                    const cells = rows.map(r => `<td>${cell(r.dataset[key], key)}</td>`).join('');
                     let deltaHtml = '';
                     if (showDelta) {
                         const d = deltaCell(first.dataset[key], last.dataset[key], isTime);

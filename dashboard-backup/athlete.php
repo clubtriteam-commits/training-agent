@@ -100,7 +100,8 @@ try {
     $stmt = $pdo->prepare("
         SELECT event_date, event_title, position, total_time, event_country,
                swim_split, t1_split, bike_split, t2_split, run_split,
-               swim_position, t1_position, bike_position, t2_position, run_position
+               swim_position, t1_position, bike_position, t2_position, run_position,
+               temperature_water, temperature_air, wetsuit
         FROM world_triathlon_results
         WHERE athlete_name = ? AND event_date IS NOT NULL
         ORDER BY event_date DESC
@@ -780,6 +781,11 @@ $alert_type_labels = [
         /* Позиция в дисциплината под времето — WT-results стил: "(3)" / "(=1)" */
         .split-pos { font-size: 12px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
         .no-splits { color: var(--muted); font-style: italic; font-size: 13px; }
+        /* Условия на състезанието (темп. вода/въздух, wetsuit) — от WT API-то,
+           виж fetch_world_triathlon.py:parse_conditions(). Не всяко състезание
+           ги има (по-малки/по-стари събития), затова целият ред е условен. */
+        .conditions-line { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--grid); }
+        .condition-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-2); background: #fafbfc; border: 1px solid var(--grid); border-radius: 12px; padding: 3px 10px; }
 
         /* Лактатен тест: header лента с дата/FTP/W-kg над таблицата */
         .lactate-panel-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-bottom: 8px; }
@@ -1159,6 +1165,22 @@ $alert_type_labels = [
                             </div>
                             <?php else: ?>
                                 <div class="no-splits">Няма детайлни данни</div>
+                            <?php endif; ?>
+                            <?php
+                                $has_conditions = ($r['temperature_water'] ?? '') !== '' || ($r['temperature_air'] ?? '') !== '' || ($r['wetsuit'] ?? '') !== '';
+                            ?>
+                            <?php if ($has_conditions): ?>
+                            <div class="conditions-line">
+                                <?php if (($r['temperature_water'] ?? '') !== ''): ?>
+                                <span class="condition-chip">🌊 <?= htmlspecialchars($r['temperature_water']) ?>°C</span>
+                                <?php endif; ?>
+                                <?php if (($r['temperature_air'] ?? '') !== ''): ?>
+                                <span class="condition-chip">🌡️ <?= htmlspecialchars($r['temperature_air']) ?>°C</span>
+                                <?php endif; ?>
+                                <?php if (($r['wetsuit'] ?? '') !== ''): ?>
+                                <span class="condition-chip"><?= htmlspecialchars(wetsuit_label($r['wetsuit'])) ?></span>
+                                <?php endif; ?>
+                            </div>
                             <?php endif; ?>
                             <?php $ev = find_evaluation_for_date($race_evaluations, $r['event_date']); if ($ev): ?>
                                 <?= eval_panel_html($ev) ?>
