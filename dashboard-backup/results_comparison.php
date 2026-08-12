@@ -50,6 +50,15 @@ try {
     $combined_results = [];
 }
 
+// Наличните години (за бутоните), най-новата първа = избрана по подразбиране —
+// същия патърн като $result_years/$default_year в athlete.php. $combined_results
+// вече е ORDER BY event_date DESC, затова array_unique запазва низходящия ред.
+$result_years = array_values(array_unique(array_map(
+    fn($r) => substr($r['event_date'], 0, 4),
+    $combined_results
+)));
+$default_year = $result_years[0] ?? null;
+
 // Избрани стартове от URL-а (?races=id1,id2,...) — bookmarkable/споделим
 // линк, същия принцип като lactate_analysis.php's ?compare=. Невалидни
 // row_id-та (изтрит резултат) просто отпадат мълчаливо по-долу.
@@ -87,6 +96,9 @@ function rc_cell($value) {
         h1 { margin: 0; font-size: 22px; }
         .subheader { color: var(--ink-2); font-size: 14px; margin-bottom: 14px; }
         .hint { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+        .year-nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+        .year-nav button { padding: 5px 12px; border-radius: 14px; font-size: 14px; border: none; background: #eceae4; color: var(--ink-2); cursor: pointer; }
+        .year-nav button.active { background: #2250e3; color: white; }
         .table-card { background: var(--surface); border-radius: 8px; padding: 16px 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); overflow-x: auto; }
         .table-card + .table-card { margin-top: 20px; }
         .table-card h2 { margin: 0 0 10px; font-size: 16px; }
@@ -129,6 +141,12 @@ function rc_cell($value) {
         <h2>Всички стартове</h2>
         <?php if ($combined_results): ?>
         <p class="hint">Изберете един или повече старта, за да сравните сплитовете им.</p>
+        <nav class="year-nav" aria-label="Филтър по година">
+            <?php foreach ($result_years as $year): ?>
+                <button type="button" data-year="<?= htmlspecialchars($year) ?>"
+                        class="<?= $year === $default_year ? 'active' : '' ?>"><?= htmlspecialchars($year) ?></button>
+            <?php endforeach; ?>
+        </nav>
         <table id="race-list">
             <thead>
                 <tr>
@@ -137,8 +155,11 @@ function rc_cell($value) {
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($combined_results as $r): ?>
+                <?php foreach ($combined_results as $r):
+                    $row_year = substr($r['event_date'], 0, 4);
+                ?>
                 <tr data-row-id="<?= htmlspecialchars($r['row_id']) ?>"
+                    data-year="<?= htmlspecialchars($row_year) ?>"
                     data-date="<?= htmlspecialchars($r['event_date']) ?>"
                     data-name="<?= htmlspecialchars($r['event_name'] ?? '') ?>"
                     data-source="<?= htmlspecialchars($r['source'] === 'wt' ? 'Официално' : 'Местно') ?>"
@@ -147,7 +168,8 @@ function rc_cell($value) {
                     data-bike="<?= htmlspecialchars($r['bike'] ?? '') ?>"
                     data-t2="<?= htmlspecialchars($r['t2'] ?? '') ?>"
                     data-run="<?= htmlspecialchars($r['run'] ?? '') ?>"
-                    data-total="<?= htmlspecialchars($r['total_time'] ?? '') ?>">
+                    data-total="<?= htmlspecialchars($r['total_time'] ?? '') ?>"
+                    <?= $row_year !== $default_year ? 'style="display:none;"' : '' ?>>
                     <td class="check-col">
                         <input type="checkbox" class="checkbox" value="<?= htmlspecialchars($r['row_id']) ?>"
                             <?= in_array($r['row_id'], $selected_ids, true) ? 'checked' : '' ?>>
@@ -252,6 +274,25 @@ function rc_cell($value) {
         }
 
         checkboxes.forEach(cb => cb.addEventListener('change', render));
+
+        // Филтър по година — същия патърн като .year-nav в athlete.php
+        // ("Резултати по година"/"Местни състезания"): смяната на година
+        // скрива редовете от другите години И изчиства избора за сравнение,
+        // за да не остане "невидим" избран старт от скрита година.
+        const nav = document.querySelector('.year-nav');
+        if (nav) {
+            const yearButtons = nav.querySelectorAll('button');
+            const rows = document.querySelectorAll('#race-list tbody tr');
+            nav.addEventListener('click', function (ev) {
+                const btn = ev.target.closest('button');
+                if (!btn) return;
+                const year = btn.dataset.year;
+                yearButtons.forEach(b => b.classList.toggle('active', b === btn));
+                rows.forEach(r => { r.style.display = r.dataset.year === year ? '' : 'none'; });
+                checkboxes.forEach(cb => { cb.checked = false; });
+                render();
+            });
+        }
     }());
     </script>
 </body>
