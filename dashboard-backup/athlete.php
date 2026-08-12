@@ -135,25 +135,22 @@ $local_result_years = array_values(array_unique(array_map(
 )));
 $local_default_year = $local_result_years[0] ?? null;
 
-// Обединена хронология (местни + World Triathlon) — сплитовете от двата
-// източника в един ред по дата, за да се вижда прогресията независимо
-// откъде идва състезанието. Само триатлон: дуатлон/акватлон местните
-// резултати нямат плуване/колело/бягане в тези колони.
+// Обединена хронология (местни + World Triathlon) — списък по дата
+// независимо откъде идва състезанието. Само триатлон: дуатлон/акватлон
+// местните резултати нямат плуване/колело/бягане в тези колони.
+// Само обзорни колони тук — сплитовете и сравнението между стартове
+// живеят на отделна страница, results_comparison.php (виж бутона по-долу),
+// за да не заема "Обединена хронология" половината дашборд.
 $combined_results = [];
 try {
     $stmt = $pdo->prepare("
-        SELECT event_date, 'local' AS source,
-               e.name AS event_name,
-               leg1 AS swim, t1, leg2 AS bike, t2, leg3 AS run, total_time
+        SELECT event_date, 'local' AS source, e.name AS event_name, total_time
         FROM local_results r JOIN local_events e ON e.event_id = r.event_id
         WHERE r.athlete_name = ? AND r.sport = 'triathlon'
 
         UNION ALL
 
-        SELECT event_date, 'wt' AS source,
-               event_title AS event_name,
-               swim_split AS swim, t1_split AS t1, bike_split AS bike,
-               t2_split AS t2, run_split AS run, total_time
+        SELECT event_date, 'wt' AS source, event_title AS event_name, total_time
         FROM world_triathlon_results
         WHERE athlete_name = ?
 
@@ -689,11 +686,12 @@ $alert_type_labels = [
         .source-badge { display: inline-block; padding: 3px 10px; border-radius: 8px; font-weight: 600; font-size: 12px; }
         .source-badge.source-wt    { background: #eef1fb; color: #2250e3; }
         .source-badge.source-local { background: #e8f5ec; color: #1f7a3d; }
-        /* Обединена хронология: избираеми редове вместо разгърнат списък */
-        .cmp-hint { color: var(--muted); font-size: 12.5px; margin: -4px 0 10px; }
-        .cmp-check-col { width: 30px; }
-        .cmp-checkbox { width: 16px; height: 16px; cursor: pointer; }
-        #combined-results-table tr.cmp-row.cmp-selected td { background: #eef1fb; }
+        /* Заглавен ред с бутон встрани, за секции с линк към отделна страница
+           (напр. "Обединена хронология" -> results_comparison.php). */
+        .section-head-row { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+        .section-head-row h2 { margin: 0; }
+        .section-link-btn { display: inline-block; padding: 4px 12px; border-radius: 12px; background: #eef1fb; color: #2250e3; font-size: 12px; font-weight: 600; white-space: nowrap; }
+        .section-link-btn:hover { background: #2250e3; color: #ffffff; }
         .result-detail td { background: transparent; padding: 0 0 14px; }
         .split-panel { background: #fafbff; border: 1px solid #e4e8f7; border-left: 3px solid #2250e3; border-radius: 10px; padding: 14px 18px; }
         .splits-grid { display: grid; grid-template-columns: repeat(5, minmax(90px, 1fr)); gap: 12px 18px; }
@@ -1198,31 +1196,22 @@ $alert_type_labels = [
     </div>
 
     <div class="table-card" style="margin-top:20px;">
-        <h2>Обединена хронология</h2>
+        <div class="section-head-row">
+            <h2>Обединена хронология</h2>
+            <?php if ($combined_results): ?>
+            <a class="section-link-btn" href="results_comparison.php?id=<?= urlencode($athlete_id) ?>">📊 Сравнение на стартове</a>
+            <?php endif; ?>
+        </div>
         <?php if ($combined_results): ?>
-        <p class="cmp-hint">Изберете един или повече старта, за да сравните сплитовете им.</p>
         <table id="combined-results-table">
             <thead>
                 <tr>
-                    <th class="cmp-check-col"></th>
                     <th>Дата</th><th>Състезание</th><th>Източник</th><th>Общо</th>
                 </tr>
             </thead>
             <tbody>
                 <?php foreach ($combined_results as $r): ?>
-                <tr class="cmp-row"
-                    data-date="<?= htmlspecialchars($r['event_date']) ?>"
-                    data-name="<?= htmlspecialchars($r['event_name'] ?? '') ?>"
-                    data-source="<?= htmlspecialchars($r['source'] === 'wt' ? 'Официално' : 'Местно') ?>"
-                    data-swim="<?= htmlspecialchars($r['swim'] ?? '') ?>"
-                    data-t1="<?= htmlspecialchars($r['t1'] ?? '') ?>"
-                    data-bike="<?= htmlspecialchars($r['bike'] ?? '') ?>"
-                    data-t2="<?= htmlspecialchars($r['t2'] ?? '') ?>"
-                    data-run="<?= htmlspecialchars($r['run'] ?? '') ?>"
-                    data-total="<?= htmlspecialchars($r['total_time'] ?? '') ?>">
-                    <td class="cmp-check-col">
-                        <input type="checkbox" class="cmp-checkbox">
-                    </td>
+                <tr>
                     <td class="event-date"><?= htmlspecialchars($r['event_date']) ?></td>
                     <td class="event-name"><?= $r['event_name'] !== null && $r['event_name'] !== '' ? htmlspecialchars($r['event_name']) : '—' ?></td>
                     <td>
@@ -1235,14 +1224,6 @@ $alert_type_labels = [
                 <?php endforeach; ?>
             </tbody>
         </table>
-
-        <div id="combined-compare" class="cmp-wrap" style="display:none; margin-top:16px;">
-            <table class="cmp-table" id="combined-compare-table">
-                <thead><tr id="combined-compare-head"><th>Показател</th></tr></thead>
-                <tbody id="combined-compare-body"></tbody>
-            </table>
-        </div>
-        <p id="combined-compare-empty" class="empty" style="margin-top:16px;">Няма избрани стартове за сравнение.</p>
         <?php else: ?>
             <p class="empty">Няма данни</p>
         <?php endif; ?>
@@ -1961,66 +1942,6 @@ $alert_type_labels = [
                 }
             });
         });
-    }());
-
-    // Обединена хронология: списъкът вече не разгръща сплитове per-row —
-    // вместо това чекбоксовете градят сравнителна таблица (metrics като
-    // редове, избраните стартове като колони), изцяло клиентски от
-    // data-* атрибутите на всеки ред, без презареждане на страницата.
-    (function () {
-        const checkboxes = document.querySelectorAll('#combined-results-table .cmp-checkbox');
-        if (!checkboxes.length) return;
-        const wrap = document.getElementById('combined-compare');
-        const emptyMsg = document.getElementById('combined-compare-empty');
-        const head = document.getElementById('combined-compare-head');
-        const body = document.getElementById('combined-compare-body');
-
-        const METRICS = [
-            ['name', 'Състезание'],
-            ['source', 'Източник'],
-            ['swim', 'Плуване'],
-            ['t1', 'T1'],
-            ['bike', 'Колело'],
-            ['t2', 'T2'],
-            ['run', 'Бягане'],
-            ['total', 'Общо'],
-        ];
-
-        function cell(value) {
-            return value && value !== '' ? value : '—';
-        }
-
-        function render() {
-            const selected = Array.from(checkboxes).filter(cb => cb.checked);
-            checkboxes.forEach(cb => {
-                cb.closest('tr').classList.toggle('cmp-selected', cb.checked);
-            });
-
-            if (!selected.length) {
-                wrap.style.display = 'none';
-                emptyMsg.style.display = '';
-                return;
-            }
-            wrap.style.display = '';
-            emptyMsg.style.display = 'none';
-
-            // Хронологичен ред на колоните (най-стар старт вляво), независимо
-            // от реда, в който са били отбелязани чекбоксовете.
-            const rows = selected
-                .map(cb => cb.closest('tr'))
-                .sort((a, b) => a.dataset.date.localeCompare(b.dataset.date));
-
-            head.innerHTML = '<th>Показател</th>' +
-                rows.map(r => `<th>${r.dataset.date}</th>`).join('');
-
-            body.innerHTML = METRICS.map(([key, label]) => {
-                const cells = rows.map(r => `<td>${cell(r.dataset[key])}</td>`).join('');
-                return `<tr><td>${label}</td>${cells}</tr>`;
-            }).join('');
-        }
-
-        checkboxes.forEach(cb => cb.addEventListener('change', render));
-        render();
     }());
 
     // Лактатни тестове: същото expand/collapse поведение, без year filter
