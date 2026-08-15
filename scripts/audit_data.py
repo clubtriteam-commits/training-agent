@@ -26,6 +26,11 @@ Data integrity audit — standalone, read-only checks across data/agent.db.
      без съответен local_events.event_id, nat_functional_tests редове без
      съответен nat_test_protocols.protocol. И двете сочат счупен sync
      (частично обновена база) или ръчна редакция извън sync скриптовете.
+  7. race_courses coverage — WT резултати на наши атлети от 2026 без
+     съответен курс в race_courses (треньорът още не е добавил курс-данни
+     за това състезание), и обратното: race_courses редове, чийто event_id
+     не резолвва в world_triathlon_results (грешно въведен ID в Sheet-а,
+     или fetch_world_triathlon.py още не е синхронизирал състезанието).
 
 Проверка 1 покрива и athlete_name за lactate_tests/local_results/
 nat_functional_tests — и трите имат само име, без athlete ID (виж ADR 0004).
@@ -290,6 +295,43 @@ def check_new_tables_referential_integrity(conn, report):
             )
 
 
+def check_race_courses_coverage(conn, athletes, report):
+    entries = report.section("7. race_courses coverage")
+    cur = conn.cursor()
+    names = {a['name'] for a in athletes}
+
+    # А) WT резултат на наш атлет от 2026 без съответен курс в race_courses.
+    cur.execute("SELECT DISTINCT event_id FROM race_courses")
+    known_courses = {row['event_id'] for row in cur.fetchall()}
+    cur.execute("""
+        SELECT DISTINCT event_id, event_title, event_date, athlete_name
+        FROM world_triathlon_results
+        WHERE event_date LIKE '2026%'
+    """)
+    for row in cur.fetchall():
+        if row['athlete_name'] not in names:
+            continue
+        # event_id в race_courses е TEXT (виж spec_race_courses.md §5), в
+        # world_triathlon_results е INTEGER — сравнение по текст и от двете
+        # страни, за да не пропусне съвпадение заради типа.
+        if str(row['event_id']) not in known_courses:
+            entries.append(
+                f"world_triathlon_results: event_id '{row['event_id']}' "
+                f"({row['event_title']}, {row['event_date']}, athlete={row['athlete_name']}) "
+                f"няма ред в race_courses — треньорът още не е добавил курс-данни за това състезание"
+            )
+
+    # Б) курс, чийто event_id не резолвва към нищо в world_triathlon_results
+    #    (== event_title остана NULL при sync, виж fetch_race_courses.py:lookup_event_title()).
+    cur.execute("SELECT event_id, date FROM race_courses WHERE event_title IS NULL")
+    for row in cur.fetchall():
+        entries.append(
+            f"race_courses: event_id '{row['event_id']}' (date={row['date']}) "
+            f"няма съответен ред в world_triathlon_results — грешен event_id в Sheet-а, "
+            f"или fetch_world_triathlon.py още не е синхронизирал това състезание"
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--stale-days', type=int, default=DEFAULT_STALE_DAYS,
@@ -307,6 +349,7 @@ def main():
         check_lactate_step_continuity(conn, report)
         check_wellness_freshness(conn, athletes, args.stale_days, report)
         check_new_tables_referential_integrity(conn, report)
+        check_race_courses_coverage(conn, athletes, report)
     finally:
         conn.close()
 
