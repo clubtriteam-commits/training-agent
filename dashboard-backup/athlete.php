@@ -98,7 +98,7 @@ $alerts = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $race_results = [];
 try {
     $stmt = $pdo->prepare("
-        SELECT event_date, event_title, position, total_time, event_country,
+        SELECT event_id, event_date, event_title, position, total_time, event_country,
                swim_split, t1_split, bike_split, t2_split, run_split,
                swim_position, t1_position, bike_position, t2_position, run_position,
                temperature_water, temperature_air, wetsuit
@@ -110,6 +110,19 @@ try {
     $race_results = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $race_results = [];
+}
+
+// Курс на състезанието (плуване/вело/бягане детайли от треньора, Sheet-таб
+// "Курсове") — ключувано по event_id, заредено веднъж тук, за да не прави
+// split панела на "Резултати по година" N+1 заявки. Виж docs/spec_race_courses.md.
+$race_courses_by_event = [];
+try {
+    $stmt = $pdo->query("SELECT * FROM race_courses");
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $c) {
+        $race_courses_by_event[$c['event_id']] = $c;
+    }
+} catch (PDOException $e) {
+    $race_courses_by_event = [];
 }
 
 // Местни състезания (fetch_local_results.py, от Google Sheet; join по
@@ -786,6 +799,19 @@ $alert_type_labels = [
            ги има (по-малки/по-стари събития), затова целият ред е условен. */
         .conditions-line { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--grid); }
         .condition-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-2); background: #fafbfc; border: 1px solid var(--grid); border-radius: 12px; padding: 3px 10px; }
+        /* Курс на състезанието (треньорски данни от race_courses) — 3 колони
+           плуване/вело/бягане, стил както conditions-line отгоре. */
+        .course-section { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--grid); }
+        .course-title { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+        .course-grid { display: grid; grid-template-columns: repeat(3, minmax(100px, 1fr)); gap: 12px 18px; }
+        .course-col-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 3px; }
+        .course-dist { font-size: 15px; font-weight: 600; color: var(--ink); }
+        .course-laps { font-size: 12px; color: var(--ink-2); }
+        .course-extra { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+        .course-notes { margin: 10px 0 0; font-size: 12px; color: var(--ink-2); font-style: italic; }
+        @media (max-width: 560px) {
+            .course-grid { grid-template-columns: repeat(2, 1fr); }
+        }
 
         /* Лактатен тест: header лента с дата/FTP/W-kg над таблицата */
         .lactate-panel-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-bottom: 8px; }
@@ -1179,6 +1205,35 @@ $alert_type_labels = [
                                 <?php endif; ?>
                                 <?php if (($r['wetsuit'] ?? '') !== ''): ?>
                                 <span class="condition-chip"><?= htmlspecialchars(wetsuit_label($r['wetsuit'])) ?></span>
+                                <?php endif; ?>
+                            </div>
+                            <?php endif; ?>
+                            <?php
+                                $course = $race_courses_by_event[(string)$r['event_id']] ?? null;
+                            ?>
+                            <?php if ($course): ?>
+                            <div class="course-section">
+                                <p class="course-title">Курс</p>
+                                <div class="course-grid">
+                                    <?php
+                                        $course_cols = [
+                                            ['Плуване', $course['swim_m'] !== null ? $course['swim_m'] . ' м' : null, $course['swim_laps'], $course['start_type']],
+                                            ['Вело', $course['bike_km'] !== null ? fmt($course['bike_km'], 1) . ' км' : null, $course['bike_laps'], $course['bike_profile']],
+                                            ['Бягане', $course['run_km'] !== null ? fmt($course['run_km'], 1) . ' км' : null, $course['run_laps'], $course['run_surface']],
+                                        ];
+                                        foreach ($course_cols as [$col_label, $col_dist, $col_laps, $col_extra]):
+                                            if ($col_dist === null && $col_laps === null && ($col_extra === null || $col_extra === '')) continue;
+                                    ?>
+                                    <div class="course-col">
+                                        <div class="course-col-label"><?= htmlspecialchars($col_label) ?></div>
+                                        <?php if ($col_dist !== null): ?><div class="course-dist"><?= htmlspecialchars($col_dist) ?></div><?php endif; ?>
+                                        <?php if ($col_laps !== null): ?><div class="course-laps"><?= (int)$col_laps ?> об.</div><?php endif; ?>
+                                        <?php if ($col_extra !== null && $col_extra !== ''): ?><div class="course-extra"><?= htmlspecialchars($col_extra) ?></div><?php endif; ?>
+                                    </div>
+                                    <?php endforeach; ?>
+                                </div>
+                                <?php if (($course['coach_notes'] ?? '') !== ''): ?>
+                                <p class="course-notes"><?= nl2br(htmlspecialchars($course['coach_notes'])) ?></p>
                                 <?php endif; ?>
                             </div>
                             <?php endif; ?>
