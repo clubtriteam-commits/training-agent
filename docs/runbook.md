@@ -157,3 +157,5 @@ for athlete in config['athletes']:
 ```
 
 **Not fully closed:** 30 days still won't catch an athlete who goes 31+ days between qualifying outdoor rides — there is no periodic wide-window catch-up sweep (unlike `world_triathlon_results`' position/condition backfill, which has its own `_computed_at` marker enabling indefinite catch-up). If this recurs, consider adding one rather than widening the daily window indefinitely (which grows the daily API payload and re-scan cost for every athlete, every day, regardless of whether they need it).
+
+**Not every zero is this bug:** post-fix (2026-08-16), Миролюба Ненкова has zero `Ride` rows and Симеон Бобеков has zero `VirtualRide` rows in `activity_zones` — confirmed genuine (checked the raw Intervals.icu API directly, not just the local table) rather than a recurrence of the window gap. Some athletes simply don't train that way (indoor-only vs outdoor-only). Before assuming this bug is back, verify against the raw API per the Diagnosis step above — don't assume every empty activity type is the window gap.
