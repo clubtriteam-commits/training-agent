@@ -1,6 +1,6 @@
 # Spec: `race_courses`
 
-> Status: **draft, awaiting approval** (Фаза 1). `docs/spec_race_evaluations.md`, посочен като шаблон, не съществува в repo-то (нито в текущото дърво, нито в git историята) — този документ следва формата на `docs/data-model.md` за схемата и стила на `docs/adr/0003-google-sheets-lab-source.md` за Sheet-sync разсъжденията, вместо да имитира несъществуващ файл.
+> Status: **одобрен** (2026-08-15) — вкл. §5 предложението (`event_id` = числов WT ID, `event_title` auto-fill от `world_triathlon_results`). `docs/spec_race_evaluations.md`, посочен като шаблон, не съществува в repo-то (нито в текущото дърво, нито в git историята) — този документ следва формата на `docs/data-model.md` за схемата и стила на `docs/adr/0003-google-sheets-lab-source.md` за Sheet-sync разсъжденията, вместо да имитира несъществуващ файл.
 
 ## 1. Цел
 

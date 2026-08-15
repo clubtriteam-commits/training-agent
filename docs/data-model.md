@@ -117,6 +117,25 @@ Pre-dates `alert_events` (see [ADR 0002](adr/0002-two-phase-detection-delivery.m
 **Written by:** `fetch_world_triathlon.py:fetch_and_save_results()`, `save_result_positions()`, `save_result_conditions()`.
 **Read by:** `athlete.php` (results table with expandable splits).
 
+### `race_courses` — course layout per race, synced from Google Sheets
+
+| Column | Type | Notes |
+|---|---|---|
+| `event_id` | TEXT PRIMARY KEY | The numeric **World Triathlon** `event_id` (e.g. `"195430"`), typed into the Sheet by the coach — deliberately **not** a `local_events`-style slug, since these are WT races already present in `world_triathlon_results`. See [spec_race_courses.md](spec_race_courses.md) §5 for why that distinction matters. |
+| `event_title` | TEXT, nullable | **Not read from the Sheet.** Auto-filled at sync time via `SELECT event_title FROM world_triathlon_results WHERE event_id = ?` — doubles as a "did this event_id actually resolve" signal; `NULL` means either a wrong `event_id` or a race `fetch_world_triathlon.py` hasn't synced yet. |
+| `date` | TEXT | ISO `YYYY-MM-DD`, from the Sheet's `Дата` column. |
+| `distance_type` | TEXT | Free text from the Sheet (`спринт`/`суперспринт` observed) — not the same value space as `WT_EVENT_DISTANCE` in `dashboard-backup/includes/wt_event_meta.php` (WT API's own "Sprint"/"Super Sprint" category); the two aren't cross-validated. |
+| `water_body`, `start_type`, `bike_profile`, `traffic_side`, `run_surface`, `aid_stations`, `start_times`, `coach_notes` | TEXT, nullable | Free text, coach-entered, no validation at entry — same trade-off as `lactate_tests` (see [ADR 0003](adr/0003-google-sheets-lab-source.md)). |
+| `swim_m`, `swim_laps`, `swim_t1_m`, `bike_laps`, `run_laps` | INTEGER, nullable | |
+| `bike_km`, `run_km` | REAL, nullable | |
+| `water_temp` | **TEXT**, nullable | Deliberately not numeric — the Sheet has ranges (`"21-23"`) and approximations (`"~27"`), not just clean degree values. |
+| `synced_at` | TEXT (auto) | |
+
+**Unique constraint:** `event_id` (the primary key itself).
+**Update frequency:** manual only, run after a Sheet edit — **no cron** (course layouts change rarely; see [spec_race_courses.md](spec_race_courses.md) for the reasoning). `INSERT OR REPLACE` keyed on `event_id`, never deletes — a row missing from the Sheet on a later sync is left in place and reported as an orphan warning, same pattern as `local_results`.
+**Written by:** `fetch_race_courses.py:sync_courses()`.
+**Read by:** `athlete.php` (planned — "Курс" section in the expanded result panel, see spec §7).
+
 ### `seen_activities` — dedup ledger for activity-based checks
 
 | Column | Type |

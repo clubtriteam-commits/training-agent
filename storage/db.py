@@ -149,6 +149,41 @@ def init_db():
         )
     ''')
 
+    # Курс на състезание (плуване/вело/бягане детайли, тип старт, настилка) —
+    # ръчно въведени от треньора в Google Sheet, синхронизирани от
+    # fetch_race_courses.py. event_id е числовият World Triathlon event_id
+    # (join към world_triathlon_results), НЕ local_events-стил slug — виж
+    # docs/spec_race_courses.md §5. event_title НЕ идва от Sheet-а, а се
+    # попълва при sync от world_triathlon_results по event_id (служи и като
+    # вграден "резолвна ли се event_id-то" сигнал, виж §3). water_temp е
+    # TEXT нарочно — Sheet-ът има диапазони ("21-23") и приблизителни
+    # стойности ("~27"), не само точни градуси.
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS race_courses (
+            event_id        TEXT PRIMARY KEY,
+            date            TEXT,
+            event_title     TEXT,
+            distance_type   TEXT,
+            water_body      TEXT,
+            start_type      TEXT,
+            swim_m          INTEGER,
+            swim_laps       INTEGER,
+            water_temp      TEXT,
+            swim_t1_m       INTEGER,
+            bike_km         REAL,
+            bike_laps       INTEGER,
+            bike_profile    TEXT,
+            traffic_side    TEXT,
+            run_km          REAL,
+            run_laps        INTEGER,
+            run_surface     TEXT,
+            aid_stations    TEXT,
+            start_times     TEXT,
+            coach_notes     TEXT,
+            synced_at       TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     # Едно измерване на лактатен тест на стъпка: до 10 стъпки, HR/La могат
     # да липсват за стъпки, до които атлетът не е стигнал (NULL, не 0 —
     # 0 би изглеждал като реално измерена стойност в графиките).
