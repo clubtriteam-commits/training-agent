@@ -21,7 +21,14 @@ def _date_range(days):
     return (today - timedelta(days=days)).isoformat(), today.isoformat()
 
 
-def get_activities(athlete_id, days=7):
+def get_activities(athlete_id, days=30):
+    # 30, не 7 — keyword/late-start дедупликират сами (filter_new_activities),
+    # но main.py's zones стъпка (upsert_activity_zones) чете ВСИЧКИ върнати
+    # активности всеки ден, не само новите; при 7 дни разредени активности
+    # (напр. шосейно колоездене между VirtualRide тренировки) редовно
+    # изпадаха между cron пусканията и никога не влизаха в activity_zones —
+    # виж инцидента от 2026-08-15, поправен с еднократен ръчен backfill
+    # (days=90) плюс тази промяна занапред.
     url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities"
     oldest, newest = _date_range(days)
     params = {"oldest": oldest, "newest": newest}

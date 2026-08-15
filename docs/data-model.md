@@ -134,7 +134,24 @@ Pre-dates `alert_events` (see [ADR 0002](adr/0002-two-phase-detection-delivery.m
 **Unique constraint:** `event_id` (the primary key itself).
 **Update frequency:** manual only, run after a Sheet edit — **no cron** (course layouts change rarely; see [spec_race_courses.md](spec_race_courses.md) for the reasoning). `INSERT OR REPLACE` keyed on `event_id`, never deletes — a row missing from the Sheet on a later sync is left in place and reported as an orphan warning, same pattern as `local_results`.
 **Written by:** `fetch_race_courses.py:sync_courses()`.
-**Read by:** `athlete.php` (planned — "Курс" section in the expanded result panel, see spec §7).
+**Read by:** `athlete.php` ("Курс" section in the expanded WT-result panel — shipped 2026-08-15).
+
+### `activity_zones` — HR/power zone snapshot per activity, from Intervals.icu
+
+| Column | Type | Notes |
+|---|---|---|
+| `athlete_id`, `athlete_name`, `activity_id` | TEXT | `activity_id` is the Intervals.icu activity ID. |
+| `activity_date`, `activity_type` | TEXT | `activity_type` is Intervals.icu's own value (`Run`, `Ride`, `VirtualRide`, `Swim`, `OpenWaterSwim`, ...) — not normalized against anything else in this codebase. |
+| `has_power` | INTEGER (bool) | `1` if the activity has power-zone-times or an average watts value; used to decide whether `athlete.php` renders a power-zone bar at all. |
+| `hr_zones_json`, `power_zones_json` | TEXT (JSON) | The athlete's configured zone **thresholds** (e.g. `[146,162,170,...]`) — present even when the activity itself has no data for that zone type. |
+| `hr_zone_times_json`, `power_zone_times_json` | TEXT (JSON) | Seconds spent in each zone **for this activity** — the actual data being visualized. Either or both can be `null` per activity; see the "missing activity type" runbook entry for why an entire *type* (not just one activity) can end up with none of these. |
+| `icu_average_watts`, `icu_weighted_avg_watts`, `icu_ftp` | REAL, nullable | |
+| `fetched_at` | TEXT (auto) | |
+
+**Unique constraint:** `(athlete_id, activity_id)`.
+**Update frequency:** daily, alongside the rest of `main.py`'s per-athlete steps — reads **every** activity in `fetch_intervals.py:get_activities()`'s response (currently a 30-day rolling window, widened from 7 on 2026-08-16 — see [runbook.md](runbook.md#зони-на-тренировка-missing-a-whole-activity-type-eg-road-ride)), not just newly-seen ones, since the upsert is idempotent by `(athlete_id, activity_id)`. An athlete whose qualifying activities are sparser than the window can still fall through — no periodic wide-window backfill exists for this table (unlike `world_triathlon_results`' `positions_computed_at`/`conditions_computed_at` pattern).
+**Written by:** `main.py` (calls `storage/db.py:upsert_activity_zones()` for every activity returned).
+**Read by:** `athlete.php` ("Зони на тренировка" section — HR/power zone bars per activity).
 
 ### `seen_activities` — dedup ledger for activity-based checks
 

@@ -131,3 +131,29 @@ git pull
 **Fix:** no application-side fix currently identified — no known purge mechanism has been found from outside a WHM/cPanel panel (not available in this project's access). In practice, the cache appears to eventually expire on its own; waiting is the current workaround. **Do not conclude a deploy or data sync failed based on the live page alone** — always verify against the database directly (or a diagnostic script) before assuming the code is wrong, per this incident.
 
 **Prevention:** treat this as a standing caveat, not something to re-diagnose from scratch each time. Any "I deployed/synced but the site doesn't show it" report should check for `X-SH-Cache-Status: HIT` *before* assuming the deploy failed. See [ADR 0007](adr/0007-limitations.md).
+
+## "Зони на тренировка" missing a whole activity type (e.g. road Ride)
+
+**Symptoms:** the "Зони на тренировка" section on `athlete.php` shows some activity types (e.g. `Run`, `VirtualRide`) but not others (e.g. plain `Ride`, pool `Swim`) — for every athlete, consistently, not just a one-off missing entry.
+
+**How this actually happened (2026-08-15/16):** `fetch_intervals.py:get_activities()` defaulted to a **7-day rolling window**. `main.py`'s zones step (`upsert_activity_zones()`) correctly processes every activity that window returns, but athletes who ride/pool-swim less often than every 7 days had their (rare) qualifying activities fall *between* cron runs — never within a 7-day window on a day the cron happened to execute. Confirmed via the raw Intervals.icu API: some `Ride` activities genuinely have no HR/power data at all (a real upstream gap, not a bug), but others had complete `icu_hr_zone_times`/`icu_zone_times` data that simply never got fetched because they were 30-75 days old by the time anyone noticed.
+
+**Diagnosis:**
+1. Compare `activity_zones` in `data/agent.db` against the raw Intervals.icu API for the same athlete/date range — fetch `GET /api/v1/athlete/{id}/activities` directly (see `fetch_intervals.py`'s auth pattern) over a wide window (60-90 days) and check which activities have `icu_hr_zone_times`/`icu_zone_times`/`icu_average_watts` non-null but are absent from `activity_zones`.
+2. If found, the gap is the 7-day (now 30-day) window, not a code bug in `upsert_activity_zones()` itself — that function is idempotent and correct, it just never got asked about the missing activity.
+
+**Fix applied:** widened `get_activities()`'s default window from 7 to 30 days (`fetch_intervals.py`) — `main.py`'s zones step reads every returned activity regardless of window size, so this alone closes most future gaps for this athlete cadence. A **one-time manual backfill** closed the existing historical gap:
+```python
+import yaml
+from fetch_intervals import get_activities
+from storage.db import upsert_activity_zones
+
+with open('config/athletes.yaml', 'r', encoding='utf-8') as f:
+    config = yaml.safe_load(f)
+for athlete in config['athletes']:
+    status, activities = get_activities(athlete['intervals_id'], days=90)
+    for a in activities:
+        upsert_activity_zones(athlete['intervals_id'], athlete['name'], a)
+```
+
+**Not fully closed:** 30 days still won't catch an athlete who goes 31+ days between qualifying outdoor rides — there is no periodic wide-window catch-up sweep (unlike `world_triathlon_results`' position/condition backfill, which has its own `_computed_at` marker enabling indefinite catch-up). If this recurs, consider adding one rather than widening the daily window indefinitely (which grows the daily API payload and re-scan cost for every athlete, every day, regardless of whether they need it).
