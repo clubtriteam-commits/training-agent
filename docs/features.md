@@ -32,7 +32,9 @@ athletes:
 - Sleep <7h, sustained 2+ nights (`readiness_sleep`)
 - Stress >10% above 7-day baseline, today only (`readiness_stress` — see [known gap](adr/0007-limitations.md) re: `stress` field availability)
 
-**Dashboard surface:** `athlete.php` — ACWR/CTL/ATL/HRV/sleep line charts (Chart.js, 30/90/180-day toggle), last-14-days table, full alert history.
+**Dashboard surface:** `athlete.php` — ACWR/CTL/ATL/HRV/sleep line charts (Chart.js, 30/90/180-day toggle), last-14-days table, full alert history. The six charts (ACWR/Load/HRV/Sleep/World/Regional Ranking) share a synchronized hover — pointing at a date on one highlights the same date on the rest, matching by the date value rather than raw index since the two ranking charts run on a sparser (3x/week) label set than the daily-metrics four.
+
+**Training zones sub-feature** ("Зони на тренировка"): a per-activity HR/power zone time-in-zone breakdown, from `main.py`'s daily `upsert_activity_zones()` piggybacking on the existing `get_activities()` call (no extra API cost) — a 5-step ordinal color ramp (validated for CVD-safe adjacent-step separation, not eyeballed) renders each activity as a stacked bar. `get_activities()` uses a 30-day rolling window (widened from 7 after a real gap — athletes cycling/pool-swimming less than weekly had qualifying activities fall between cron runs and never get fetched at all; see [runbook.md](runbook.md)).
 
 ## 2. Race Tracking
 
@@ -46,7 +48,13 @@ athletes:
 
 **Dashboard surface:** `athlete.php`'s "Резултати по година" (results by year) — year-filtered table, click-to-expand per-result split panel (Swim/T1/Bike/T2/Run times + computed positions), podium-colored position badges.
 
+**Race-day conditions** (water/air temperature, wetsuit legality): captured for free from the same event-results API call already used for split positions (`fetch_world_triathlon.py:parse_conditions()`) — no extra request. Shown as small chips (🌊/🌡️/wetsuit status) in the split panel when the data exists; smaller/older events often don't have it. Mixed/Team/Youth Relay results share `event_id` with the athlete's individual result at the same event and would otherwise render as apparent duplicates — excluded from `results_comparison.php` via a manually-curated, API-verified list in `includes/wt_event_meta.php` (`WT_RELAY_EVENT_PROG_IDS`), which needs a manual update for future events not yet in it.
+
+**Course layout data** (`race_courses`): coach-maintained swim/bike/run course details (distances, laps, start type, surface, notes) per World Triathlon event, synced from a "Курсове" tab in the local-results Sheet by `fetch_race_courses.py`. `event_id` is the numeric WT event ID (matching `world_triathlon_results`, not a `local_events`-style slug); `event_title` is never typed into the Sheet — it auto-fills at sync time by looking up `world_triathlon_results` for that `event_id`, which doubles as a signal that the ID actually resolved. Rendered as a 3-column "Курс" section (Плуване/Вело/Бягане: distance, laps, and a discipline-specific detail) in the same split panel as the conditions chips, only when a matching row exists.
+
 **Local (Bulgarian) races** — a separate, parallel source for domestic competitions that never reach the World Triathlon API: a coach-maintained Google Sheet (three result tabs — triathlon/duathlon/aquathlon — merged into one `local_results` table with discipline-agnostic `leg1`/`leg2`/`leg3` columns, since what each leg *means* varies by sport). Synced weekly by `fetch_local_results.py`, same upsert-only/orphan-check pattern as the lab-data scripts (see [ADR 0003](adr/0003-google-sheets-lab-source.md)). Rendered on `athlete.php` as its own "Местни състезания" section — visually mirrors the World Triathlon results table (year filter, expandable split panels, podium badges) but is a fully independent block, since the page's year-filter JavaScript only ever binds to the first `.year-nav` it finds.
+
+**Race comparison** — a compact card on `athlete.php` ("Сравнение на стартове": a mini bar-timeline sized by total time, plus Стартове/Последен/Най-бърз спринт stats) links to `results_comparison.php`, a dedicated page for picking multiple starts (checkboxes, year-filtered, selection survives year switches and is bookmarkable via `?races=id1,id2`) and comparing their splits side by side — including a Δ column (minutes:seconds, colored by whether the newest selected start was faster) and an optional "compare with another athlete" dropdown that pools both athletes' starts into one table.
 
 ## 3. Health Alerts
 
