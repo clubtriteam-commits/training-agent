@@ -734,6 +734,13 @@ $alert_type_labels = [
         a { color: #2250e3; text-decoration: none; }
         .header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 6px; }
         h1 { margin: 0; font-size: 26px; }
+        /* Page-level анкор навигация (UI/UX audit finding #5) — sticky под
+           header-а, чисти #id връзки към 4-те групи секции по-долу, никакъв
+           JS. scroll-margin-top на самите цели компенсира sticky nav-а. */
+        .page-nav { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; gap: 6px; background: var(--surface); padding: 10px 0; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .page-nav a { padding: 5px 14px; border-radius: 14px; font-size: 13px; font-weight: 600; color: var(--ink-2); background: #eceae4; }
+        .page-nav a:hover { background: var(--action); color: #fff; }
+        #sec-training, #sec-races, #sec-zones, #sec-lab { scroll-margin-top: 64px; }
         .subheader { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
         .period-nav a { padding: 5px 12px; border-radius: 14px; font-size: 14px; }
         .period-nav a.active { background: #2250e3; color: white; }
@@ -1004,7 +1011,13 @@ $alert_type_labels = [
         </h1>
         <a href="dashboard.php">&larr; Всички атлети</a>
     </div>
-    <div class="subheader">
+    <nav class="page-nav" aria-label="Секции на страницата">
+        <a href="#sec-training">Тренировка</a>
+        <a href="#sec-races">Състезания</a>
+        <a href="#sec-zones">Зони</a>
+        <a href="#sec-lab">Лаборатория</a>
+    </nav>
+    <div class="subheader" id="sec-training">
         <span style="color:var(--ink-2);font-size:14px;">
             Последни данни: <?= $latest ? htmlspecialchars($latest['date']) : '—' ?>
         </span>
@@ -1113,7 +1126,7 @@ $alert_type_labels = [
         </div>
     </div>
 
-    <div class="table-card" style="margin-top:20px;">
+    <div class="table-card" style="margin-top:20px;" id="sec-races">
         <h2>Резултати по година</h2>
         <?php if ($race_results): ?>
         <nav class="year-nav" aria-label="Филтър по година">
@@ -1387,7 +1400,7 @@ $alert_type_labels = [
         </div>
     </div>
 
-    <div class="table-card" style="margin-top:20px;">
+    <div class="table-card" style="margin-top:20px;" id="sec-zones">
         <h2>Зони на тренировка</h2>
         <?php if ($activity_zones): ?>
         <div class="zone-legend">
@@ -1459,7 +1472,7 @@ $alert_type_labels = [
         <?php endif; ?>
     </div>
 
-    <div class="table-card" style="margin-top:20px;">
+    <div class="table-card" style="margin-top:20px;" id="sec-lab">
         <h2>Оценки — сезонен тренд</h2>
         <?php if (count($race_evaluations) >= 2): ?>
         <div style="overflow-x:auto;">
