@@ -755,12 +755,19 @@ $alert_type_labels = [
         .result-row td.total-time { font-weight: 700; font-size: 15px; }
         .result-row:hover td, .result-row:focus-visible td { background: #f5f7ff; }
         .result-row.open td { background: #eef1fb; border-bottom-color: transparent; }
+        /* .pill: обща геометрия за "цветен текст в заоблено пилче" (UI/UX
+           audit finding #3) — .source-badge/.lt-badge/.eval-badge вече не
+           дублират padding/radius/font-weight поотделно, само цветовете си.
+           .pos-badge остава отделно — различна работа (числова позиция,
+           фиксиран размер), не етикет-пиле; .condition-chip също — визуално
+           е bordered outline chip, не цветна запълнена площ, нарочно другаде. */
+        .pill, .source-badge, .lt-badge, .eval-badge { display: inline-flex; align-items: center; justify-content: center; padding: 3px 10px; border-radius: 8px; font-weight: 700; font-size: 12px; }
         .pos-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 34px; height: 28px; padding: 0 9px; border-radius: 8px; font-weight: 700; font-size: 15px; background: #eef1fb; color: #2250e3; }
         .pos-badge.pos-gold   { background: #f6ecc8; color: #8a6d1a; }
         .pos-badge.pos-silver { background: #ececec; color: #5f5f5f; }
         .pos-badge.pos-bronze { background: #f3e2d0; color: #8a5a2a; }
         .pos-badge.pos-dnx    { background: #f9e9e9; color: #b03a3a; font-size: 12px; letter-spacing: 0.03em; }
-        .source-badge { display: inline-block; padding: 3px 10px; border-radius: 8px; font-weight: 600; font-size: 12px; }
+        .source-badge { font-weight: 600; }
         .source-badge.source-wt    { background: #eef1fb; color: #2250e3; }
         .source-badge.source-local { background: #e8f5ec; color: #1f7a3d; }
         /* Компактна карта вместо пълния списък под "Обединена хронология" —
@@ -844,14 +851,10 @@ $alert_type_labels = [
         .lt-row-la th { background: var(--surface); color: var(--ink-2); font-weight: 600; }
         .lt-row-la td { padding: 5px 6px; }
         .lt-row-la td:nth-child(even) { background: #fafbff; }
-        .lt-badge {
-            display: inline-flex; align-items: center; justify-content: center;
-            min-width: 38px; padding: 3px 8px; border-radius: 7px;
-            font-weight: 700; font-size: 12px; font-variant-numeric: tabular-nums;
-        }
-        .lt-badge.lt-low  { background: #e5f3e6; color: #2e7d32; }
-        .lt-badge.lt-mid  { background: #fdecd2; color: #b8600a; }
-        .lt-badge.lt-high { background: #fbe2e2; color: #c62828; }
+        .lt-badge { min-width: 38px; font-variant-numeric: tabular-nums; }
+        .lt-badge.lt-low  { background: var(--good-soft); color: var(--good); }
+        .lt-badge.lt-mid  { background: var(--warn-soft); color: var(--warn); }
+        .lt-badge.lt-high { background: var(--bad-soft); color: var(--bad); }
         /* LT1/LT2 маркери: цветно подчертаване на цялата колона + малък таг под ватовете */
         .lactate-steps-table td.lt1-col { box-shadow: inset 0 0 0 999px rgba(245, 124, 0, 0.10); }
         .lactate-steps-table td.lt2-col { box-shadow: inset 0 0 0 999px rgba(198, 40, 40, 0.10); }
@@ -892,7 +895,11 @@ $alert_type_labels = [
         @media (max-width: 900px) { .protocol-grid { grid-template-columns: 1fr; } }
 
         /* ---- trend mini-card ---- */
-        .trend-card { background: #fafbfc; border: 1px solid var(--grid); border-radius: 8px; padding: 14px 16px; }
+        /* .trend-card/.single-card бяха байт-по-байт еднакви кутии (UI/UX
+           audit finding #4) освен padding/layout — общата "вторична
+           повърхност" геометрия сега е тук, всяка запазва само своето. */
+        .trend-card, .single-card { background: #fafbfc; border: 1px solid var(--grid); border-radius: 8px; }
+        .trend-card { padding: 14px 16px; }
         .trend-card .chart-wrap { position: relative; height: 150px; margin-top: 6px; }
         .trend-metrics { display: flex; gap: 18px; margin-top: 12px; flex-wrap: wrap; }
         .trend-metric { flex: 1; min-width: 90px; }
@@ -938,10 +945,10 @@ $alert_type_labels = [
         .eval-group { margin-bottom: 6px; font-size: 13px; }
         .eval-group-label { display: inline-block; min-width: 60px; font-weight: 600; color: var(--ink-2); }
         .eval-el-label { color: var(--ink-2); margin-right: 10px; }
-        .eval-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 2px 6px; border-radius: 6px; font-weight: 700; font-size: 12px; margin-right: 2px; }
-        .eval-badge.eval-good { background: #e5f3e6; color: #2e7d32; }
-        .eval-badge.eval-mid  { background: #fdecd2; color: #b8600a; }
-        .eval-badge.eval-bad  { background: #fbe2e2; color: #c62828; }
+        .eval-badge { min-width: 30px; padding: 2px 6px; margin-right: 2px; }
+        .eval-badge.eval-good { background: var(--good-soft); color: var(--good); }
+        .eval-badge.eval-mid  { background: var(--warn-soft); color: var(--warn); }
+        .eval-badge.eval-bad  { background: var(--bad-soft); color: var(--bad); }
         .eval-badge.eval-na   { background: var(--grid); color: var(--muted); }
         .eval-note { margin: 2px 0 0 60px; font-size: 12px; color: var(--ink-2); font-style: italic; }
         .eval-general-note { margin: 8px 0 0; padding-top: 8px; border-top: 1px dashed var(--grid); font-style: normal; }
@@ -969,7 +976,7 @@ $alert_type_labels = [
         .eval-popup-event { display: block; color: var(--muted); font-size: 11px; margin-bottom: 6px; }
 
         /* ---- single-point card (протокол с 1 тест — тренд все още невъзможен) ---- */
-        .single-card { background: #fafbfc; border: 1px solid var(--grid); border-radius: 8px; padding: 16px 18px; display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
+        .single-card { padding: 16px 18px; display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
         .single-stat .tm-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
         .single-stat .tm-value { font-size: 20px; font-weight: 700; margin-top: 1px; }
         .single-note { font-size: 12px; color: var(--muted); font-style: italic; margin-left: auto; max-width: 260px; }
