@@ -1946,13 +1946,13 @@ $alert_type_labels = [
         };
     }
 
-    new Chart(document.getElementById('chartAcwr'), {
+    const chartAcwr = new Chart(document.getElementById('chartAcwr'), {
         type: 'line',
         data: { labels: DATA.labels, datasets: [series('ACWR', DATA.acwr, BLUE)] },
         options: baseOptions({ yBand: { from: 0.8, to: 1.3 }, suggestedMin: 0.5, suggestedMax: 1.6 })
     });
 
-    new Chart(document.getElementById('chartLoad'), {
+    const chartLoad = new Chart(document.getElementById('chartLoad'), {
         type: 'line',
         data: {
             labels: DATA.labels,
@@ -1964,29 +1964,66 @@ $alert_type_labels = [
         options: baseOptions({ legend: true })
     });
 
-    new Chart(document.getElementById('chartHrv'), {
+    const chartHrv = new Chart(document.getElementById('chartHrv'), {
         type: 'line',
         data: { labels: DATA.labels, datasets: [series('HRV', DATA.hrv, BLUE)] },
         options: baseOptions()
     });
 
-    new Chart(document.getElementById('chartSleep'), {
+    const chartSleep = new Chart(document.getElementById('chartSleep'), {
         type: 'line',
         data: { labels: DATA.labels, datasets: [series('Сън (ч)', DATA.sleep, BLUE)] },
         options: baseOptions()
     });
 
-    new Chart(document.getElementById('chartWorld'), {
+    const chartWorld = new Chart(document.getElementById('chartWorld'), {
         type: 'line',
         data: { labels: DATA.rankLabels, datasets: [series('World Ranking', DATA.world, BLUE)] },
         options: baseOptions({ reverse: true })
     });
 
-    new Chart(document.getElementById('chartRegional'), {
+    const chartRegional = new Chart(document.getElementById('chartRegional'), {
         type: 'line',
         data: { labels: DATA.rankLabels, datasets: [series('Regional Ranking', DATA.regional, BLUE)] },
         options: baseOptions({ reverse: true })
     });
+
+    // Синхронизиран hover между тези 6 графики (UI/UX audit finding #6) —
+    // всяка вече показва добър within-chart crosshair (interaction:'index'
+    // в baseOptions), но hover-ване на пика в ACWR не подсвета същата дата
+    // в Сън/HRV три карти по-нататък, въпреки че точно затова са 6 малки
+    // графики на общ период, не 1 голяма. World/Regional Ranking ползват
+    // РЯДЪК label набор (rankLabels, 3x/седмично), различен от дневния
+    // labels на другите 4 — синхронизацията匹配 по СТОЙНОСТТА на датата
+    // (indexOf в собствения label масив на всяка графика), не по суров
+    // индекс, иначе би подсветила грешна дата при ranking графиките при
+    // всяко hover извън техните собствени rank дати просто не подсветва нищо.
+    function linkChartsHover(charts) {
+        charts.forEach(chart => {
+            chart.canvas.addEventListener('mousemove', (evt) => {
+                const points = chart.getElementsAtEventForMode(evt, 'index', { intersect: false }, false);
+                if (!points.length) return;
+                const label = chart.data.labels[points[0].index];
+                charts.forEach(other => {
+                    if (other === chart) return;
+                    const idx = other.data.labels.indexOf(label);
+                    const elements = idx === -1 ? [] : other.data.datasets.map((_, datasetIndex) => ({ datasetIndex, index: idx }));
+                    other.setActiveElements(elements);
+                    other.tooltip.setActiveElements(elements, { x: 0, y: 0 });
+                    other.update('none');
+                });
+            });
+            chart.canvas.addEventListener('mouseleave', () => {
+                charts.forEach(other => {
+                    if (other === chart) return;
+                    other.setActiveElements([]);
+                    other.tooltip.setActiveElements([], { x: 0, y: 0 });
+                    other.update('none');
+                });
+            });
+        });
+    }
+    linkChartsHover([chartAcwr, chartLoad, chartHrv, chartSleep, chartWorld, chartRegional]);
 
     // НЦ функционални тестове: по един trend line chart + (ако протоколът
     // има personal-best данни за поне 2 общи оси) радар на протокол с 2+
