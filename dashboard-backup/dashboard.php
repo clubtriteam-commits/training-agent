@@ -3,6 +3,7 @@ header('Cache-Control: no-store, no-cache, must-revalidate');
 require_once 'includes/auth.php';
 require_once 'includes/db.php';
 require_once 'includes/metrics_glossary.php';
+require_once 'includes/design_tokens.php';
 require_login();
 
 $pdo = get_db_connection();
@@ -49,13 +50,8 @@ function get_recent_alerts($pdo, $athlete_id, $limit = 5) {
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-function status_badge($status) {
-    $colors = ['ok' => '#2e7d32', 'low' => '#f57c00', 'high' => '#c62828', 'no_data' => '#999'];
-    $labels = ['ok' => 'Нормално', 'low' => 'Детрениране', 'high' => 'Риск', 'no_data' => 'Няма данни'];
-    $color = $colors[$status] ?? '#999';
-    $label = $labels[$status] ?? $status;
-    return "<span style=\"background:$color;color:white;padding:3px 10px;border-radius:12px;font-size:13px;\">$label</span>";
-}
+// status_badge() вече идва от includes/design_tokens.php — споделена с
+// athlete.php, вместо дублирана дефиниция тук (UI/UX audit finding #1).
 ?>
 <!DOCTYPE html>
 <html lang="bg">
@@ -64,19 +60,22 @@ function status_badge($status) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Athlete Dashboard</title>
     <style>
-        body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 20px; }
+        :root {
+            <?php render_design_tokens(); ?>
+        }
+        body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 20px; color: var(--ink); }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-        h1 { margin: 0; color: #333; }
+        h1 { margin: 0; color: var(--ink); }
         .logout { color: #2250e3; text-decoration: none; }
         .athletes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
-        .card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .card { background: var(--surface); border-radius: 8px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
         .card h2 { margin-top: 0; color: #2250e3; }
-        .metric-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #eee; }
-        .metric-label { color: #666; }
+        .metric-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--grid); }
+        .metric-label { color: var(--ink-2); }
         .metric-value { font-weight: bold; }
         .alerts { margin-top: 15px; }
-        .alert-item { font-size: 13px; color: #555; padding: 4px 0; border-bottom: 1px solid #f0f0f0; }
-        .no-alerts { color: #999; font-size: 13px; font-style: italic; }
+        .alert-item { font-size: 13px; color: var(--ink-2); padding: 4px 0; border-bottom: 1px solid var(--grid); }
+        .no-alerts { color: var(--muted); font-size: 13px; font-style: italic; }
     </style>
 </head>
 <body>

@@ -3,6 +3,7 @@ header('Cache-Control: no-store, no-cache, must-revalidate');
 require_once 'includes/auth.php';
 require_once 'includes/db.php';
 require_once 'includes/wt_event_meta.php';
+require_once 'includes/design_tokens.php';
 require_login();
 
 $pdo = get_db_connection();
@@ -209,11 +210,7 @@ $last_selected = $selected_results[count($selected_results) - 1] ?? null;
     <title><?= htmlspecialchars($athlete_name) ?> — Сравнение на стартове</title>
     <style>
         :root {
-            --ink: #0b0b0b;
-            --ink-2: #52514e;
-            --muted: #898781;
-            --grid: #e1e0d9;
-            --surface: #ffffff;
+            <?php render_design_tokens(); ?>
         }
         body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 20px; color: var(--ink); }
         a { color: #2250e3; text-decoration: none; }

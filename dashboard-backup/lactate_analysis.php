@@ -1,6 +1,7 @@
 <?php
 header('Cache-Control: no-store, no-cache, must-revalidate');
 require_once 'includes/auth.php';
+require_once 'includes/design_tokens.php';
 require_login();
 
 // Само за back-линка — самите тестови данни идват от api_lactate.php през fetch().
@@ -20,11 +21,7 @@ $compare = isset($_GET['compare']) ? $_GET['compare'] : '';
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <style>
         :root {
-            --ink: #0b0b0b;
-            --ink-2: #52514e;
-            --muted: #898781;
-            --grid: #e1e0d9;
-            --surface: #ffffff;
+            <?php render_design_tokens(); ?>
         }
         body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 20px; color: var(--ink); }
         a { color: #2250e3; text-decoration: none; }

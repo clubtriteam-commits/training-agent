@@ -13,6 +13,7 @@ require_once 'includes/metrics_glossary.php';
 require_once 'includes/lactate_zones.php';
 require_once 'includes/nat_tests.php';
 require_once 'includes/wt_event_meta.php';
+require_once 'includes/design_tokens.php';
 require_login();
 
 $pdo = get_db_connection();
@@ -349,13 +350,8 @@ $default_year = $result_years[0] ?? null;
 // Последни 14 дни за таблицата (най-новите първи)
 $table_rows = array_reverse(array_slice($metrics, -14));
 
-function status_badge($status) {
-    $colors = ['ok' => '#2e7d32', 'low' => '#f57c00', 'high' => '#c62828', 'no_data' => '#999'];
-    $labels = ['ok' => 'Нормално', 'low' => 'Детрениране', 'high' => 'Риск', 'no_data' => 'Няма данни'];
-    $color = $colors[$status] ?? '#999';
-    $label = $labels[$status] ?? $status;
-    return "<span class=\"badge\" style=\"background:$color;\">$label</span>";
-}
+// status_badge() вече идва от includes/design_tokens.php — споделена с
+// dashboard.php, вместо дублирана дефиниция тук (UI/UX audit finding #1).
 
 function fmt($value, $decimals = 1) {
     return $value === null ? '—' : number_format((float)$value, $decimals);
@@ -719,11 +715,7 @@ $alert_type_labels = [
         :root {
             --series-1: #2a78d6;   /* синьо — основна серия */
             --series-2: #1baf7a;   /* аква — втора серия */
-            --ink: #0b0b0b;
-            --ink-2: #52514e;
-            --muted: #898781;
-            --grid: #e1e0d9;
-            --surface: #ffffff;
+            <?php render_design_tokens(); ?>
             --up: #1e7d3a;
             --down: #b03a3a;
             --flat: #898781;
@@ -742,7 +734,6 @@ $alert_type_labels = [
         a { color: #2250e3; text-decoration: none; }
         .header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 6px; }
         h1 { margin: 0; font-size: 26px; }
-        .badge { color: white; padding: 4px 12px; border-radius: 12px; font-size: 14px; vertical-align: middle; }
         .subheader { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
         .period-nav a { padding: 5px 12px; border-radius: 14px; font-size: 14px; }
         .period-nav a.active { background: #2250e3; color: white; }
