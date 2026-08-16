@@ -12,6 +12,18 @@
 // includes/*.php патърн в проекта (виж metrics_glossary.php), не въвежда
 // нов asset pipeline. Страница-специфични токени (--series-1, --zone-*
 // в athlete.php и т.н.) си остават локални, не се местят тук.
+//
+// --action срещу --series-1/2 (audit finding #2, 2026-08-16): същия
+// #2250e3, който вече се ползваше навсякъде hardcoded за връзки/бутони/
+// активни състояния — именуван тук, за да е ясно, че UI chrome (действия,
+// hover, active) взима --action, а --series-1/2 остават САМО за data
+// encoding (графики, mini-viz барове, radar серии). Двете не се сливат
+// нарочно — различна роля, не случайно разминаване.
+//
+// --good/--warn/--bad (+ -soft фон варианти): именуват вече консистентно
+// ползваната статус палитра (.lt-badge/.eval-badge/status_badge() вече
+// имаха еднакви hex стойности навсякъде — тук просто получават общо име,
+// за да не се препечатва #2e7d32 шести път при следващ status компонент).
 function render_design_tokens() {
     ?>
     --ink: #0b0b0b;
@@ -19,6 +31,13 @@ function render_design_tokens() {
     --muted: #898781;
     --grid: #e1e0d9;
     --surface: #ffffff;
+    --action: #2250e3;
+    --good: #2e7d32;
+    --good-soft: #e5f3e6;
+    --warn: #b8600a;
+    --warn-soft: #fdecd2;
+    --bad: #c62828;
+    --bad-soft: #fbe2e2;
     <?php
 }
 

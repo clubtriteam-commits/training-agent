@@ -946,7 +946,7 @@ $alert_type_labels = [
         /* Клетка с бележка: пунктирано подчертаване сигнализира "кликни ме"
            без да добавя визуален шум за клетките без бележка. */
         .eval-cell.has-note { cursor: pointer; border-bottom: 1px dotted var(--muted); padding-bottom: 1px; }
-        .eval-cell.has-note:hover, .eval-cell.has-note.active { border-bottom-color: var(--series-1); }
+        .eval-cell.has-note:hover, .eval-cell.has-note.active { border-bottom-color: var(--action); }
         /* Popup — speech-bubble над/под кликнатата клетка, позициониран в JS
            (position:fixed убягва overflow:auto на table-card без нужда от
            преместване в DOM-а). Стрелката е чист CSS триъгълник, посоката
